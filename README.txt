@@ -8,7 +8,7 @@ usage:
 3. After program starts you will be prompted to enter filter by line "provide your filters:" you have couple of options:
 
 3.1 Leave empty and press enter
-This will list log file as is with substantial alteration. whatever you see in console will be also stored into file out.txt. This will be done no matter if you enter filter or not.
+This will list log file as is without substantial alteration. whatever result you see in console will be also stored into file out.txt. This will be done no matter if you enter filter or not.
 
 3.2 provide filter
 3.2.1 Inclusive and exclusive filters, they will be explained in example.
@@ -21,8 +21,9 @@ cccccc
 dddddd
 
 Inclusive filters:
-If one issues filter "a ddd" this will preserve the lines which contains those strings so the result in console would be in that case (As mentioned the result will be stored also in out.txt) :
+If one issues filter "a ddd" this will preserve the lines which contains those strings (As mentioned the result will be stored also in out.txt).
 
+example:
 provide your filters: 
 a ddd
 
@@ -33,8 +34,9 @@ dddddd
 
 
 Exclusive filters:
-If one issues the same filter but with tokens prefixed with @ the filter became exclusive, so "@a @ddd" will exclude the lines which contains those strings:
+If one issues the same filter but with tokens prefixed with @ the filter became exclusive, so "@a @ddd" will exclude the lines which contains those strings.
 
+example:
 provide your filters: 
 @a @ddd
 
@@ -44,8 +46,9 @@ cccccc
 
 
 
-Filters could be combined so " aaa bbb ccc @c " will result with:
+Filters could be combined.
 
+example:
 provide your filters: 
 aaa bbb ccc @c
 
@@ -75,7 +78,9 @@ bbbb
 cccccc
 dddddd
 
-There is of special interest to  inspect neighborhood of line consisting "f" sign, then following is possible
+There is of special interest to inspect neighborhood of line consisting "f" sign, then following is possible
+
+example:
 
 provide your filters:
 f^2
@@ -94,6 +99,10 @@ aaaaaa
 bbbb
 ----------------------------
 
+Where:
+f  <- string to match
+^  <- special sign
+2  <- how many lines to preserve before (2 lines - this includes matching line itself) and after (2 lines)
 As one can see only relevant sections are displyed.
 It is possible to combine also those filters.
 
