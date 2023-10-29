@@ -67,6 +67,7 @@ regexSeedPattern = [
 
 
 evalRegex = \ utfLst, patterns, regex ->
+
     if List.isEmpty utfLst then
         Ok regex
         #Err NoTokens
@@ -175,18 +176,18 @@ checkMatching = \ utfLst, reg  ->
                     current = List.dropFirst  updatedState.current
                     if List.isEmpty current == Bool.true then
                         #{ updatedState & matched : Str.concat updatedState.matched utf, result : Bool.true  }
-                        { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : Bool.true , missed : [], left : []}
+                        { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : Bool.true , missed : updatedState.missed, left : []}
                     else 
                         #{ updatedState & matched : Str.concat updatedState.matched utf, current : List.dropFirst  updatedState.current }
-                        { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result , missed : [], left : []}
+                        { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : []}
                 Keep updatedToken ->
                         current = 
                             List.dropFirst  updatedState.current
                             |> List.prepend  updatedToken
-                        { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result , missed : [], left : []}
+                        { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : []}
                 NoMatch _ ->   
                         #{ updatedState & current : updatedState.regex, matched : "" } )
-                        { regex : updatedState.regex, matched : [], current : updatedState.regex, result : updatedState.result , missed : [], left : []} )
+                        { regex : updatedState.regex, matched : [], current : updatedState.regex, result : updatedState.result , missed : List.append updatedState.missed utf, left : []} )
 
 #  Ok [{ parsedResult: { current: [], left: [], matched: [46], missed: [], regex: [{ capture: Bool.false, n: 0, serie: Once, token: Dot }], result: Bool.true }, tag: Character }]
 
@@ -244,8 +245,31 @@ regexCreationStage1 = \ _seed ->
     
     
 
-#regexCreationStage2  = \ str, patterns ->
-#    evalRegex (Str.toUtf8  ".") patterns []
+regexCreationStage2  = \ str, patterns ->
+    ( evalRegex (Str.toUtf8  str) patterns [] )
+    |> ( \ resultSet -> 
+        when resultSet is
+            Ok  results ->
+                List.walk results (Ok []) ( \ state, result  ->
+                    when state is 
+                        Err message -> Err message 
+                        Ok lst ->                    
+                            when  result.tag is 
+                                Character ->
+                                    when List.first result.parsedResult.matched is 
+                                        Ok  matched  ->
+                                            Ok (List.append lst  (createToken (Character matched) Once 0) )
+                                        Err _ -> Err "parser  match problem"
+                                    
+                                Dot ->
+                                    Ok (List.append lst (createToken Dot Once 0) )
+                                Empty -> Err "Empty"  
+                        )
+                         
+            Err Empty ->  Err "Empty" 
+            Err NoTokens ->  Err "NoTokens"
+            Err PriorityListErr ->  Err "PriorityListErr"
+    )
     
     
 #parseStr \ str, pattern ->
@@ -258,8 +282,22 @@ regexCreationStage1 = \ _seed ->
 
 
 main =  
-    #dbg checkMatching "w"  ([ createToken  Dot  Once 0 ])  
-    dbg  regexCreationStage1 []
+ 
+    stage1  = regexCreationStage1 []
+    kwas = 
+        when stage1 is 
+            Ok stage1Pat -> 
+                regexCreationStage2 "ds.u" stage1Pat
+                
+            Err message -> 
+                Err message
+    dbg when kwas  is 
+        Ok pat -> 
+            Ok (checkMatching (Str.toUtf8  "ds4ds" ) pat )
+                
+        Err message -> 
+            Err message            
+    #dbg checkMatching "ds4ds"  kwas
     #dbg evalRegex (Str.toUtf8  ".") regexSeedPattern []
     #dbg checkMatching "ds4ds"  [NotInRange [ charToUtf "e" ,charToUtf "d"],NoDigit,Dot,Character (charToUtf "s")] 
     
