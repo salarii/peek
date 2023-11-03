@@ -5,6 +5,7 @@
     provides [main] to pf
 
 # simplified, one level capture, nothing more needed  in context of peek (at least for now ), it is just easy this way 
+# in  general more I dig into it, more and more corner cases come to a surface. I think I don't need to deal with all of them. I will limit myself to use cases vailid in context of peek app 
 priorities =
     Dict.empty {}
     |> Dict.insert Empty -1
@@ -13,7 +14,6 @@ priorities =
     |> Dict.insert CaptureOpen 2
     |> Dict.insert CaptureClose 3
     |> Dict.insert AtLeastOne 4
-    |> Sequence 5
 
 charToUtf = \ char ->
     Str.toUtf8 char
@@ -52,31 +52,25 @@ getPrioToken = \ patterns ->
 decorate = \ tokens ->
     tokens
 
-createToken = \ token, serie, n, capture ->
-    when serie is
-        NTimes ->
-            { token :token,  n : n, serie : serie, capture : capture  } 
-        _ ->
-            { token :token,  n : 0, serie : serie, capture : capture  }
+createToken = \ token, serie, capture ->
+    { token :token, serie : serie, capture : capture  }
 
 regexSeedPattern = [
-    { tag : Character, tokens : [ createToken  Dot  Once 0 Bool.false ] } ]
+    { tag : Character, tokens : [ createToken  Dot  Once Bool.false ] } ]
 
 
 
 evalRegex = \ utfLst, patterns, regex ->
-
     if List.isEmpty utfLst then
         Ok regex
-        #Err NoTokens
-        #[{ tag : Dot, parsedResult : { regex : [], current : [], matched : [], result : Bool.false } }]
     else
         List.walk patterns [] ( \ state, pattern ->
             out = checkMatching utfLst pattern.tokens
             if out.result == Bool.true  && List.isEmpty out.missed then
                 List.append state { tag : pattern.tag, parsedResult : out } 
             else
-                state )
+                state 
+            )
         |> getPrioToken
         |> ( \ prioToken ->
             when prioToken is
@@ -131,49 +125,76 @@ checkMatching = \ utfLst, reg  ->
         when tokenMeta.serie is
             AtLeastOne ->
                 when result is
-                    Consume -> Keep { tokenMeta & n : tokenMeta.n + 1 }
+                    Consume -> Keep tokenMeta  
                     NoMatch ->
-                        if tokenMeta.n == 0 then
-                            NoMatch tokenMeta 
-                        else
-                            Consume { tokenMeta & n : tokenMeta.n - 1 }
-                     #{ tokenMeta & result : NoMatch }
+                        NoMatch tokenMeta 
+                        
             ZeroOrMore ->
                 when result is
                     Consume -> Keep  tokenMeta 
                     NoMatch -> Consume tokenMeta 
-            NTimes -> 
+            NTimes cnt -> 
                 when result is
                     Consume ->
-                        if tokenMeta.n == 1 then
                             Consume  tokenMeta 
-                        else
-                            Keep { tokenMeta & n : tokenMeta.n - 1}
                     NoMatch -> NoMatch  tokenMeta 
             Once ->
                 when result is
                     Consume -> Consume tokenMeta 
                     NoMatch -> NoMatch tokenMeta 
     )
-    updateRegex = (\regex ->    
-        regex ) 
-    
-    getFirstPat = (\  state  ->  
-        when List.first state.current is
-            Ok pat -> 
-                { pattern : pat , state : state } 
-            #Err _ ->  getFirstPat  { state & current : state.regex } )
-            Err _ ->  getFirstPat  { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed , left : state.left, captured : state.captured} )
 
-    #reg = 
-    #    List.walk regInitial { reg : [], updatedCapture : Bool.false} ( \ state, tok ->
-    #        if tok.token == CaptureOpen then
-    #            {state & reg : List.append  state.reg tok,updatedCapture : Bool.true }
-    #        else if tok.token == CaptureClose then
-    #            {state & reg : List.append  state.reg tok,updatedCapture : Bool.false }
-    #        else
-    #            {state & reg : List.append  state.reg {tok & capture : state.updatedCapture  }  } )
-    #    |> ( \ composite -> composite.reg )
+    updateRegex = (\regex ->   
+        List.walk  regex [] ( \ state, regItem ->
+            when List.first regItem.current is 
+                Ok pat ->
+                    when pat.token  is
+                        Sequence  chain ->
+                            when pat.serie is 
+                                AtLeastOne ->           
+                                    changeFront = 
+                                        (List.dropFirst regItem.current)
+                                        |> List.prepend { pat & serie : ZeroOrMore }
+                                        
+                                    List.concat chain changeFront
+                                    |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
+                                ZeroOrMore ->
+
+                                    List.append state {regItem & current : (List.dropFirst regItem.current)}  
+                                    |> List.append 
+                                        (List.concat chain (List.dropFirst regItem.current)
+                                        |> (\ updatedCurrent ->  {regItem & current : updatedCurrent, meta : Active} ))
+                                NTimes cnt -> 
+                                    concatIter = (\ n , lst, stored ->
+                                        if n == 0 then 
+                                            stored
+                                        else 
+                                            concatIter (n-1) lst (List.concat lst stored  ))
+                                    
+                                    List.concat (concatIter cnt chain  [] ) (List.dropFirst regItem.current)
+                                    |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
+                                Once ->
+                                    List.concat chain (List.dropFirst regItem.current)
+                                    |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
+                        _ -> List.append state regItem
+                    
+                Err _ -> List.append state regItem )
+        )
+
+    getFirstPat = (\  state  ->  
+        if state.meta == Inactive then
+            Inactive state
+        else
+            when List.first state.current is
+                Ok pat -> 
+                    Active { pattern : pat , state : state } 
+                Err _ ->
+                    if state.meta == Origin then
+                        getFirstPat  { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed , left : state.left, captured : state.captured, meta : state.meta } 
+                    else   
+                        Inactive {state & meta : Inactive } )
+
+
 
     checkLastListEmpty = (\ listOfLists  ->
             when List.last listOfLists is
@@ -185,71 +206,73 @@ checkMatching = \ utfLst, reg  ->
         )
 
     complexSearch = 
-        List.walk utfLst [{ regex : reg, current : reg, matched : [], result : Bool.false, missed : [], left : [] , captured : []}]  ( \ outState, utf ->
+        List.walk utfLst [{ regex : reg, current : reg, matched : [], result : Bool.false, missed : [], left : [] , captured : [], meta : Origin}]  ( \ outState, utf ->
             updatedStates = updateRegex outState 
             List.walk updatedStates [] ( \ state, processedReg ->   
                 if processedReg.result == Bool.true then
-                    List.append state { regex : processedReg.regex, current : processedReg.current, matched : processedReg.matched, result : processedReg.result, missed : processedReg.missed , left : List.append  processedReg.left utf, captured : processedReg.captured } 
+                    List.append state { regex : processedReg.regex, current : processedReg.current, matched : processedReg.matched, result : processedReg.result, missed : processedReg.missed , left : List.append  processedReg.left utf, captured : processedReg.captured, meta  : processedReg.meta} 
                 else
-                    # pattern  current captured
-                    matchThis =
-                        getFirstPat processedReg
-                        |> ( \ tok ->
-                            toUpdateState = tok.state  
-                            if tok.pattern.token == CaptureOpen then
-                                
-                                tmp = getFirstPat {toUpdateState & current : List.dropFirst toUpdateState.current } 
-                                tmpState = tmp.state
-                                captureUpdateOpen = 
-                                    if checkLastListEmpty tmpState.captured then
-                                        tmpState.captured
-                                    else 
-                                        List.append tmpState.captured []
-                                { tmp & state : { tmpState &   captured : captureUpdateOpen } }
-                            else if tok.pattern.token == CaptureClose then
-                                tmp = getFirstPat {toUpdateState & current : List.dropFirst toUpdateState.current } 
-                                tmpState = tmp.state
-                                { tmp & state : { tmpState &   captured : List.append tmpState.captured [] } }
-                            else
-                                tok )
-
-                    updatedState = matchThis.state
-                    current = List.dropFirst  updatedState.current
-                    dbg  current
-                    updatedCapture =
-                        if matchThis.pattern.capture == Bool.true then
-                            when List.last updatedState.captured is
-                                Ok lst -> 
-                                    List.dropLast updatedState.captured
-                                    |> List.append (List.append lst utf)
-                                Err _ ->
-                                    updatedState.captured    
-                        else
-                            updatedState.captured
+                   
+                    manageIteration = ( \ inProcessedReg,curState -> 
+                        when getFirstPat inProcessedReg is
+                            Inactive patternSet ->
+                                List.append curState inProcessedReg
+                            Active matchThis ->
+                                toUpdateState = matchThis.state  
+                                if matchThis.pattern.token == CaptureOpen then
                         
-                    
-                    when matchSerie utf  matchThis.pattern is 
-                        Consume updatedToken ->
-                            
-                            if List.isEmpty current == Bool.true then
-                                #{ updatedState & matched : Str.concat updatedState.matched utf, result : Bool.true  }
-                                List.append state { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : Bool.true , missed : updatedState.missed, left : [], captured : updatedCapture}
-                            else 
-                                #{ updatedState & matched : Str.concat updatedState.matched utf, current : List.dropFirst  updatedState.current }
-                                List.append state { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : [], captured : updatedCapture}
-                        Keep updatedToken ->
-
-                                List.append state { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : [], captured : updatedCapture}
-                        NoMatch _ ->   
-                                #{ updatedState & current : updatedState.regex, matched : "" } )
-                                noMatchCaptureUpdate =
-                                    if checkLastListEmpty updatedState.captured then
-                                        updatedState.captured
-                                    else 
-                                        List.dropLast updatedState.captured 
-                                List.append state { regex : updatedState.regex, matched : [], current : updatedState.regex, result : updatedState.result , missed : List.append updatedState.missed utf, left : [], captured : noMatchCaptureUpdate} ))
-
-    List.walk complexSearch  { regex : reg, current : reg, matched : [], result : Bool.false, missed : [], left : [] , captured :[] } ( \ state, parsResult -> 
+                                    tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current }
+                                    captureUpdateOpen = 
+                                        if checkLastListEmpty tmpState.captured then
+                                            tmpState.captured
+                                        else 
+                                            List.append tmpState.captured []
+                                    manageIteration { tmpState &  captured : captureUpdateOpen }  curState
+      
+                                else if matchThis.pattern.token == CaptureClose then
+                                    tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current } 
+                                            
+                                    manageIteration { tmpState &   captured : List.append tmpState.captured [] } curState
+                                else
+                
+                                    updatedState = matchThis.state
+                                    current = List.dropFirst  updatedState.current
+                                    # funny  !!!!!!!!  List.isEmpty current  crashes  here  
+                                    #dbg  (List.isEmpty current == Bool.true )
+                                    updatedCapture =
+                                        if matchThis.pattern.capture == Bool.true then
+                                            when List.last updatedState.captured is
+                                                Ok lst -> 
+                                                    List.dropLast updatedState.captured
+                                                    |> List.append (List.append lst utf)
+                                                Err _ ->
+                                                    updatedState.captured    
+                                        else
+                                            updatedState.captured
+                                    
+                                    when matchSerie utf  matchThis.pattern is 
+                                        Consume updatedToken ->
+                                                
+                                             if List.len current == 0 then
+                                                #{ updatedState & matched : Str.concat updatedState.matched utf, result : Bool.true  }
+                                                List.append curState { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : Bool.true , missed : updatedState.missed, left : [], captured : updatedCapture, meta : updatedState.meta}
+                                            else 
+                                                #{ updatedState & matched : Str.concat updatedState.matched utf, current : List.dropFirst  updatedState.current }
+                                                List.append curState { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : [], captured : updatedCapture, meta : updatedState.meta}
+                                        Keep updatedToken ->
+                                            List.append curState { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : [], captured : updatedCapture, meta : updatedState.meta}
+                                        NoMatch _ ->  
+                                                #{ updatedState & current : updatedState.regex, matched : "" } )
+                                                noMatchCaptureUpdate =
+                                                    if checkLastListEmpty updatedState.captured then
+                                                        updatedState.captured
+                                                    else 
+                                                        List.dropLast updatedState.captured 
+                                                List.append curState { regex : updatedState.regex, matched : [], current : updatedState.regex, result : updatedState.result , missed : List.append updatedState.missed utf, left : [], captured : noMatchCaptureUpdate, meta : updatedState.meta} 
+                                )
+                    manageIteration processedReg state ) 
+        )
+    List.walk complexSearch  { regex : reg, current : reg, matched : [], result : Bool.false, missed : [], left : [] , captured :[], meta : Inactive } ( \ state, parsResult -> 
         if state.result == Bool.true then
             if List.len parsResult.matched > List.len state.matched  then 
                 parsResult
@@ -265,7 +288,7 @@ getRegexTokens = \ result  ->
     when result.tag is 
         Character-> 
             when List.first result.parsedResult.matched is 
-                Ok  matched  -> Ok [(createToken  ( Character matched )  Once 0 Bool.false )]
+                Ok  matched  -> Ok [(createToken  ( Character matched )  Once Bool.false )]
                 Err  _  -> Err "character  tag problem"
             
         _ -> Err "wrong tag"
@@ -273,54 +296,59 @@ getRegexTokens = \ result  ->
 
 firstStagePatterns = [
         { tag : Dot, str : "."},
-        #{ tag : CaptureOpen, str : "("},
-        #{ tag : CaptureClose, str : ")"},
+        { tag : CaptureOpen, str : "("},
+        { tag : CaptureClose, str : ")"},
         { tag : AtLeastOne, str : "+" }]
         
-secondStagePatterns = [
-        {tag : Sequence, str : "(.+"} 
-    ]    
+secondStagePatterns = []    
 
 
 regexCreationStage = \ inPatterns, ignitionPatterns ->
 
-    regPatterns = List.walk inPatterns (Ok []) ( \ state, pat->
-        when state is 
-            Ok patterns -> 
-                when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
-                    Ok result ->
-                        if (List.len result == 1 ) then
-                            when List.first result is 
-                                Ok  elem  ->
-                                    when  getRegexTokens elem is 
-                                        Ok tokens -> 
-                                            Ok (List.append patterns { tag : pat.tag, tokens :   tokens } )    
-                                        Err message -> Err message  
-                                    
-            
-                                Err _ -> Err "can't be here" 
-                                
-                        else 
-                            Err "parsing regex keys problem"
-                        
-                    Err Empty ->  Err "Empty" 
-                    Err NoTokens ->  Err "NoTokens"
-                    Err PriorityListErr ->  Err "PriorityListErr"
-            Err message ->  Err message )
+    regPatterns = 
+        List.walk inPatterns (Ok []) ( \ state, pat->
+            when state is 
+                Ok patterns -> 
+                    when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
+                        Ok result ->
+                            if (List.len result == 1 ) then
+                                when List.first result is 
+                                    Ok  elem  ->
+                                        when  getRegexTokens elem is 
+                                            Ok tokens -> 
+                                                workaround = 
+                                                    List.walk  tokens [] ( \ workState, token -> 
+                                                        List.append workState (createToken token.token token.serie  token.capture) ) 
+                                                 
+                                                
+                                                # !!!!!!!!!!! crashes  here Ok [{ tag : pat.tag, tokens : tokens }]
+                                                Ok (List.append patterns { tag : pat.tag, tokens : workaround } )    
+                                                
+                                            Err message -> Err message  
+
+                                    Err _ -> Err "can't be here"                
+                            else 
+                                Err "parsing regex keys problem"
+
+                        Err Empty ->  Err "Empty" 
+                        Err NoTokens ->  Err "NoTokens"
+                        Err PriorityListErr ->  Err "PriorityListErr"
+                Err message ->  Err message )
     when regPatterns is 
         Ok patterns ->
-            Ok ( List.concat  regexSeedPattern  patterns )
+            Ok ( List.concat  ignitionPatterns  patterns )
         Err  message  -> Err  message  
     
     
-StagesCreationRegex  = \ _param -> 
-    stage1  = regexCreationStage firstStagePatterns regexSeedPattern
-    when stage1 is 
-        Ok stage1Pat -> 
-            regexCreationStage secondStagePatterns stage1Pat
+stagesCreationRegex  = \ _param -> 
+    regexCreationStage firstStagePatterns regexSeedPattern
+    #stage1  = regexCreationStage firstStagePatterns regexSeedPattern
+    #when stage1 is 
+    #    Ok stage1Pat -> 
+    #        regexCreationStage secondStagePatterns stage1Pat
                 
-        Err message -> 
-            Err message
+    #    Err message -> 
+    #        Err message
 
 
 regexCreationStage2  = \ str, patterns, currReg ->
@@ -331,20 +359,43 @@ regexCreationStage2  = \ str, patterns, currReg ->
                 List.walk results (Ok { lst : [] , capture : Bool.false }) ( \ outState, result  ->
                     when outState is 
                         Err message -> Err message 
-                        Ok state ->                    
+                        Ok state ->
+                            modifLastInChain = (\ chainLst, token ->
+                                when List.last chainLst is 
+                                    Ok elem ->
+                                        when elem.token is 
+                                            Sequence  chain ->
+                                                when List.last chain is
+                                                    Ok lastOnChain ->
+                                                        when lastOnChain.token is 
+                                                            CaptureClose -> 
+                                                                List.append chainLst token            
+                                                            _ -> 
+                                                                List.dropLast chainLst
+                                                                |> List.append  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+                                                    Err _ ->
+                                                        List.dropLast chainLst
+                                                        |> List.append  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+                                            _ ->  
+                                                List.append chainLst token                  
+                                    Err _ ->
+                                        List.append chainLst token
+                                        
+                            )
+                                            
                             when  result.tag is 
                                 Character ->
                                     when List.first result.parsedResult.matched is 
                                         Ok  matched  ->
-                                            Ok { state &  lst : List.append state.lst  (createToken (Character matched) Once 0 state.capture) }
+                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character matched) Once state.capture) }
                                         Err _ -> Err "parser  match problem"
                                     
                                 Dot ->
-                                    Ok { state &  lst : List.append state.lst (createToken Dot Once 0 state.capture )  }
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken Dot Once state.capture )  }
                                 CaptureOpen ->
-                                    Ok { lst : List.append state.lst (createToken CaptureOpen Once 0 Bool.false), capture : Bool.true}
+                                    Ok { lst : modifLastInChain state.lst (createToken (Sequence [(createToken CaptureOpen Once Bool.false)]) Once Bool.false), capture : Bool.true}
                                 CaptureClose ->
-                                    Ok { lst : List.append state.lst (createToken CaptureClose Once 0 Bool.false), capture : Bool.false }
+                                    Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : Bool.false }
                                 AtLeastOne ->
                                     when List.last state.lst is
                                         Ok elem ->
@@ -354,24 +405,6 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                               
                                             Ok { state &  lst : updatedLst }
                                         Err _ -> Err "Wrong usage of + in pattern"  
-                                Sequence -> 
-                                    List.dropFirst result.parsedResult.matched
-                                    |> List.reverse 
-                                    |> checkMatching (Str.toUtf8  ")" pat
-                                    |> ( \ resultMatchingClose ->
-                                        List.dropFirst resultMatchingClose.matched
-                                        |> List.reverse
-                                        |>  evalRegex  patterns []
-                                        |> ( \ internalRegResult ->
-                                            when internalRegResult is 
-                                                Ok interResult ->
-                                                    strLeft = List.reverse resultMatchingClose.left
-                                                    regexCreationStage2  strLeft  patterns state.lst
-                                                
-                                                Err Empty ->  Err "Empty" 
-                                                Err NoTokens ->  Err "NoTokens"
-                                                Err PriorityListErr ->  Err "PriorityListErr" ) 
-
                                 Empty -> Err "Empty"  
                         )
                 |> (\ tokenLst -> 
@@ -397,21 +430,22 @@ regexCreationStage2  = \ str, patterns, currReg ->
 
 main =  
  
-    stage1  = StagesCreationRegex []
-    kwas = 
-        when stage1 is 
-            Ok stage1Pat -> 
-                regexCreationStage2 "ds(.)d" stage1Pat  []
+    stage1  = stagesCreationRegex []
+    #kwas = 
+    #    when stage1 is 
+    #        Ok stage1Pat -> 
+    #            regexCreationStage2 "ds(.)d" stage1Pat  []
                 
-            Err message -> 
-                Err message
-    zenon =
-        when kwas  is 
-            Ok pat -> 
-                Ok (checkMatching (Str.toUtf8  "ds4ds" ) pat )
+    #        Err message -> 
+    #            Err message
+    #dbg  kwas 
+    #zenon =
+    #    when kwas  is 
+    #        Ok pat -> 
+    #            Ok (checkMatching (Str.toUtf8  "ds4ds" ) pat )
                     
-            Err message -> 
-                Err message          
+    #        Err message -> 
+    #            Err message          
 
     Stdout.line "adfasfsa"
     
