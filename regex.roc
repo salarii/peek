@@ -6,6 +6,7 @@
 
 # simplified, one level capture, nothing more needed  in context of peek (at least for now ), it is just easy this way 
 # in  general more I dig into it, more and more corner cases come to a surface. I think I don't need to deal with all of them. I will limit myself to use cases vailid in context of peek app 
+# dbg crashing left and right on some of more complex object
 priorities =
     Dict.empty {}
     |> Dict.insert Empty -1
@@ -120,28 +121,12 @@ checkMatching = \ utfLst, reg  ->
                 Consume
             _ -> NoMatch
     
-    matchSerie = ( \ utf, tokenMeta ->
+    matchUtf = ( \ utf, tokenMeta ->
         result = matchStr utf tokenMeta.token
-        when tokenMeta.serie is
-            AtLeastOne ->
-                when result is
-                    Consume -> Keep tokenMeta  
-                    NoMatch ->
-                        NoMatch tokenMeta 
-                        
-            ZeroOrMore ->
-                when result is
-                    Consume -> Keep  tokenMeta 
-                    NoMatch -> Consume tokenMeta 
-            NTimes cnt -> 
-                when result is
-                    Consume ->
-                            Consume  tokenMeta 
-                    NoMatch -> NoMatch  tokenMeta 
-            Once ->
-                when result is
-                    Consume -> Consume tokenMeta 
-                    NoMatch -> NoMatch tokenMeta 
+        
+        when result is
+            Consume -> Consume tokenMeta 
+            NoMatch -> NoMatch tokenMeta 
     )
 
     updateRegex = (\regex ->   
@@ -208,11 +193,14 @@ checkMatching = \ utfLst, reg  ->
     complexSearch = 
         List.walk utfLst [{ regex : reg, current : reg, matched : [], result : Bool.false, missed : [], left : [] , captured : [], meta : Origin}]  ( \ outState, utf ->
             updatedStates = updateRegex outState 
+            
             List.walk updatedStates [] ( \ state, processedReg ->   
+
                 if processedReg.result == Bool.true then
                     List.append state { regex : processedReg.regex, current : processedReg.current, matched : processedReg.matched, result : processedReg.result, missed : processedReg.missed , left : List.append  processedReg.left utf, captured : processedReg.captured, meta  : processedReg.meta} 
                 else
-                   
+                    
+                     
                     manageIteration = ( \ inProcessedReg,curState -> 
                         when getFirstPat inProcessedReg is
                             Inactive patternSet ->
@@ -220,7 +208,6 @@ checkMatching = \ utfLst, reg  ->
                             Active matchThis ->
                                 toUpdateState = matchThis.state  
                                 if matchThis.pattern.token == CaptureOpen then
-                        
                                     tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current }
                                     captureUpdateOpen = 
                                         if checkLastListEmpty tmpState.captured then
@@ -230,14 +217,13 @@ checkMatching = \ utfLst, reg  ->
                                     manageIteration { tmpState &  captured : captureUpdateOpen }  curState
       
                                 else if matchThis.pattern.token == CaptureClose then
-                                    tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current } 
-                                            
+                                    tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current }    
                                     manageIteration { tmpState &   captured : List.append tmpState.captured [] } curState
                                 else
-                
+
                                     updatedState = matchThis.state
                                     current = List.dropFirst  updatedState.current
-                                    # funny  !!!!!!!!  List.isEmpty current  crashes  here  
+                                    #   !!!!!!!!  List.isEmpty current  crashes  here  
                                     #dbg  (List.isEmpty current == Bool.true )
                                     updatedCapture =
                                         if matchThis.pattern.capture == Bool.true then
@@ -250,25 +236,23 @@ checkMatching = \ utfLst, reg  ->
                                         else
                                             updatedState.captured
                                     
-                                    when matchSerie utf  matchThis.pattern is 
+                                    when matchUtf utf  matchThis.pattern is 
                                         Consume updatedToken ->
-                                                
-                                             if List.len current == 0 then
+                                            if List.len current == 0 then
                                                 #{ updatedState & matched : Str.concat updatedState.matched utf, result : Bool.true  }
                                                 List.append curState { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : Bool.true , missed : updatedState.missed, left : [], captured : updatedCapture, meta : updatedState.meta}
                                             else 
                                                 #{ updatedState & matched : Str.concat updatedState.matched utf, current : List.dropFirst  updatedState.current }
                                                 List.append curState { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : [], captured : updatedCapture, meta : updatedState.meta}
-                                        Keep updatedToken ->
-                                            List.append curState { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : [], captured : updatedCapture, meta : updatedState.meta}
-                                        NoMatch _ ->  
+                                        NoMatch _ ->
                                                 #{ updatedState & current : updatedState.regex, matched : "" } )
                                                 noMatchCaptureUpdate =
                                                     if checkLastListEmpty updatedState.captured then
                                                         updatedState.captured
                                                     else 
                                                         List.dropLast updatedState.captured 
-                                                List.append curState { regex : updatedState.regex, matched : [], current : updatedState.regex, result : updatedState.result , missed : List.append updatedState.missed utf, left : [], captured : noMatchCaptureUpdate, meta : updatedState.meta} 
+                                                List.append curState { regex : updatedState.regex, matched : [], current : updatedState.regex, result : updatedState.result , missed : List.append updatedState.missed utf, left : [], captured : noMatchCaptureUpdate, meta : updatedState.meta}
+                                        _ -> curState  
                                 )
                     manageIteration processedReg state ) 
         )
@@ -431,22 +415,29 @@ regexCreationStage2  = \ str, patterns, currReg ->
 main =  
  
     stage1  = stagesCreationRegex []
-    #kwas = 
-    #    when stage1 is 
-    #        Ok stage1Pat -> 
-    #            regexCreationStage2 "ds(.)d" stage1Pat  []
+    kwas = 
+        when stage1 is 
+            Ok stage1Pat -> 
+                regexCreationStage2 "ds(.)r" stage1Pat  []
                 
-    #        Err message -> 
-    #            Err message
-    #dbg  kwas 
-    #zenon =
-    #    when kwas  is 
-    #        Ok pat -> 
-    #            Ok (checkMatching (Str.toUtf8  "ds4ds" ) pat )
+            Err message -> 
+                Err message
+    dbg  "kwas"
+    zenon =
+        when kwas  is 
+            Ok pat -> 
+                Ok (checkMatching (Str.toUtf8  "ds4rs" ) pat )
                     
-    #        Err message -> 
-    #            Err message          
-
+            Err message -> 
+                Err message          
+    rama =
+        when zenon is 
+            Ok val ->
+                
+                dbg  val.result 
+                4
+            Err _ ->
+                4 
     Stdout.line "adfasfsa"
     
     
