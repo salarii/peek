@@ -59,7 +59,54 @@ createToken = \ token, serie, capture ->
 regexSeedPattern = [
     { tag : Character, tokens : [ createToken  Dot  Once Bool.false ] } ]
 
+#  test  this, I could not figure  out  how to do this properly 
+splitChainOnPipes = \ chain, inputLst ->
+    when List.first chain is 
+        Ok elem ->
+            when elem.token is 
+                Pipe -> 
 
+                        List.walk ( splitChainOnPipes (List.dropFirst chain) []) [] ( \ state, lst ->
+                            List.append state lst
+                        )
+                        |>   List.append []
+                Sequence  inChain ->
+
+                    partialSeqResult =
+                        List.walk ( splitChainOnPipes inChain []) [] ( \ outState, frontLst ->                               
+                            
+                            List.walk ( splitChainOnPipes (List.dropFirst chain) []) outState ( \ state, lst ->                                
+                                List.append state  ( List.concat [ {elem & token : Sequence frontLst } ]  lst) 
+                            )        
+                        )   
+          
+                    when List.last partialSeqResult is
+                        Ok activElem ->
+                            List.dropLast partialSeqResult
+                            |> List.walk  [] ( \ state,  lst ->
+                                List.append state (List.concat inputLst lst))
+                            |> List.append  activElem
+                        Err _ ->
+                            []
+                     
+                _ ->
+
+                    partialResult =
+                        List.walk ( splitChainOnPipes (List.dropFirst chain) (List.append inputLst elem )) [] ( \ state, lst ->
+                                List.append state lst
+                        )
+
+                    when List.last partialResult is 
+                        Ok lst -> 
+                            
+                            List.dropLast partialResult
+                            |> List.append  (List.concat [elem] lst) 
+                        Err _ -> 
+                            []
+                    
+        Err _ ->
+            [[]]
+        
 
 evalRegex = \ utfLst, patterns, regex ->
     if List.isEmpty utfLst then
@@ -351,7 +398,7 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                             Sequence  chain ->
                                                 when List.last chain is
                                                     Ok lastOnChain ->
-                                                        when lastOnChain.token is 
+                                                        when token.token is 
                                                             CaptureClose -> 
                                                                 List.append chainLst token            
                                                             _ -> 
@@ -377,18 +424,35 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                 Dot ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken Dot Once state.capture )  }
                                 CaptureOpen ->
-                                    Ok { lst : modifLastInChain state.lst (createToken (Sequence [(createToken CaptureOpen Once Bool.false)]) Once Bool.false), capture : Bool.true}
+                                    
+                                    openLst = 
+                                        modifLastInChain state.lst (createToken CaptureOpen Once Bool.false)
+                                        |> modifLastInChain  (createToken (Sequence []) Once Bool.false)
+                                    Ok { lst : openLst, capture : Bool.true}
                                 CaptureClose ->
                                     Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : Bool.false }
                                 AtLeastOne ->
-                                    when List.last state.lst is
-                                        Ok elem ->
-                                            updatedLst = 
-                                                List.dropLast state.lst
-                                                |> List.append  {elem & serie : AtLeastOne }
-                                              
-                                            Ok { state &  lst : updatedLst }
-                                        Err _ -> Err "Wrong usage of + in pattern"  
+                                    
+                                    # this exist because of some failures in design
+                                    omitCaptureEnd = ( \ inLst -> 
+                                        when List.last inLst is
+                                            Ok elem ->
+                                                when elem.token is 
+                                                    CaptureClose ->
+                                                        when omitCaptureEnd ( List.dropLast inLst ) is 
+                                                            Ok updatedLst ->
+                                                                Ok (List.append updatedLst elem)
+                                                            Err message -> Err message 
+                                                    _ ->
+                                                        Ok ( List.dropLast inLst
+                                                            |> List.append  {elem & serie : AtLeastOne } )
+                                                
+                                            Err _ -> Err "Wrong usage of + in pattern"        
+                                        ) 
+                                    when omitCaptureEnd state.lst is 
+                                        Ok newLst -> Ok { state &  lst : newLst }
+                                        Err message -> Err message  
+                     
                                 Empty -> Err "Empty"  
                         )
                 |> (\ tokenLst -> 
@@ -410,6 +474,36 @@ regexCreationStage2  = \ str, patterns, currReg ->
 #    checkMatching str reg  ->
 # create  patterns  and  than  parse  string with it     
 
+# dbg  not always  works so I  am using this : ) 
+printMe = (  \ arrayPrt ->
+                    List.walk arrayPrt "" (  \ inState , token ->
+                            nnn =
+                                when  token.token  is 
+                                    Character  val -> 
+                                        dbg  "character :  " 
+                                        dbg val 
+                                        4
+                                    Dot ->
+                                        dbg "Dot"
+                                        4
+                                    CaptureOpen ->
+                                        dbg "Capture  Open"
+                                        4
+                                    CaptureClose ->
+                                        dbg "Capture  Close"
+                                        4
+                                    Sequence  array  ->    
+                                        dbg  "seq  :  " 
+                                        dbg List.len array 
+                                        ll = printMe array
+                                        4
+                                    _ -> 
+                                    
+                                        dbg  "something else "
+                                        3
+                            ""
+                            )
+                        )
 
 
 main =  
@@ -422,22 +516,48 @@ main =
                 
             Err message -> 
                 Err message
-    dbg  "kwas"
-    zenon =
-        when kwas  is 
-            Ok pat -> 
-                Ok (checkMatching (Str.toUtf8  "ds4rs" ) pat )
+        
+        
+    dbg when kwas is 
+        Ok resPatt ->
+            dbg printMe resPatt
+            1
+        Err message -> 
+            dbg  message
+            0            
+    
+    #dbg stage1
+    #zenon =
+    #    when kwas  is 
+    #        Ok pat -> 
+    #            Ok (checkMatching (Str.toUtf8  "ds4rs" ) pat )
                     
-            Err message -> 
-                Err message          
-    rama =
-        when zenon is 
-            Ok val ->
+    #        Err message -> 
+    #            Err message          
+    
+    #createToken  Pipe  Once Bool.false
+    #chain2  = [ createToken  (Character  11)  Once Bool.false, createToken  Pipe  Once Bool.false ,createToken  (Character  55)  Once Bool.false]
+    #chain1  = [createToken  (Character  11)  Once Bool.false , createToken  (Character  22)  Once Bool.false , createToken  Pipe  Once Bool.false,createToken  (Character  33)  Once Bool.false, createToken  ( Sequence chain2)  Once Bool.false  ] 
+
+    #result =
+        #splitChainOnPipes  chain1   [] 
+    #    splitChainOnPipes  [createToken  (Character  4)  Once Bool.false , createToken  ( Sequence chain1)  Once Bool.false, createToken  (Character  6)  Once Bool.false  ]   [] 
+    #ggg =
+    #    List.walk result "" (  \ state , resElem ->
+
+    #            ii = printMe  resElem
+    #            state 
+    #        )
+    
+    
+    #rama =
+    #    when zenon is 
+    #        Ok val ->
                 
-                dbg  val.result 
-                4
-            Err _ ->
-                4 
+    #            dbg  val.result 
+    #           4
+    #        Err _ ->
+    #            4 
     Stdout.line "adfasfsa"
     
     
