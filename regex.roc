@@ -12,18 +12,11 @@ priorities =
     |> Dict.insert Empty -1
     |> Dict.insert Character 0
     |> Dict.insert Dot 1
-    |> Dict.insert CaptureOpen 2
-    |> Dict.insert CaptureClose 3
-    |> Dict.insert AtLeastOne 4
+    |> Dict.insert CaptureOpen 1
+    |> Dict.insert CaptureClose 1
+    |> Dict.insert AtLeastOne 1
+    |> Dict.insert Separator 1
 
-charToUtf = \ char ->
-    Str.toUtf8 char
-    |> List.first
-    |> ( \ res ->
-        when res is 
-            Ok utf8 -> utf8
-            Err _ -> 0  ) 
-        
 
 getPrioToken = \ patterns ->
     if List.isEmpty patterns then
@@ -49,9 +42,6 @@ getPrioToken = \ patterns ->
                         Err _ -> Err PriorityListErr
                 Err message -> Err message 
         )
-    
-decorate = \ tokens ->
-    tokens
 
 createToken = \ token, serie, capture ->
     { token :token, serie : serie, capture : capture  }
@@ -60,22 +50,22 @@ regexSeedPattern = [
     { tag : Character, tokens : [ createToken  Dot  Once Bool.false ] } ]
 
 #  test  this, I could not figure  out  how to do this properly 
-splitChainOnPipes = \ chain, inputLst ->
+splitChainOnSeparators = \ chain, inputLst ->
     when List.first chain is 
         Ok elem ->
             when elem.token is 
-                Pipe -> 
+                Separator -> 
 
-                        List.walk ( splitChainOnPipes (List.dropFirst chain) []) [] ( \ state, lst ->
+                        List.walk ( splitChainOnSeparators (List.dropFirst chain) []) [] ( \ state, lst ->
                             List.append state lst
                         )
                         |>   List.append []
                 Sequence  inChain ->
 
                     partialSeqResult =
-                        List.walk ( splitChainOnPipes inChain []) [] ( \ outState, frontLst ->                               
+                        List.walk ( splitChainOnSeparators inChain []) [] ( \ outState, frontLst ->                               
                             
-                            List.walk ( splitChainOnPipes (List.dropFirst chain) []) outState ( \ state, lst ->                                
+                            List.walk ( splitChainOnSeparators (List.dropFirst chain) []) outState ( \ state, lst ->                                
                                 List.append state  ( List.concat [ {elem & token : Sequence frontLst } ]  lst) 
                             )        
                         )   
@@ -92,7 +82,7 @@ splitChainOnPipes = \ chain, inputLst ->
                 _ ->
 
                     partialResult =
-                        List.walk ( splitChainOnPipes (List.dropFirst chain) (List.append inputLst elem )) [] ( \ state, lst ->
+                        List.walk ( splitChainOnSeparators (List.dropFirst chain) (List.append inputLst elem )) [] ( \ state, lst ->
                                 List.append state lst
                         )
 
@@ -329,7 +319,8 @@ firstStagePatterns = [
         { tag : Dot, str : "."},
         { tag : CaptureOpen, str : "("},
         { tag : CaptureClose, str : ")"},
-        { tag : AtLeastOne, str : "+" }]
+        { tag : AtLeastOne, str : "+" },
+        { tag : Separator, str : "|" }]
         
 secondStagePatterns = []    
 
@@ -431,6 +422,8 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                     Ok { lst : openLst, capture : Bool.true}
                                 CaptureClose ->
                                     Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : Bool.false }
+                                Separator -> 
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken Separator Once Bool.false )  }
                                 AtLeastOne ->
                                     
                                     # this exist because of some failures in design
@@ -467,97 +460,82 @@ regexCreationStage2  = \ str, patterns, currReg ->
     )
     
     
-#parseStr \ str, pattern ->
-#    regexCapable = regexCreationStage1  _
-#    reg  = regexCreationStage2    pattern  regexCapable
+
     
 #    checkMatching str reg  ->
 # create  patterns  and  than  parse  string with it     
 
 # dbg  not always  works so I  am using this : ) 
 printMe = (  \ arrayPrt ->
-                    List.walk arrayPrt "" (  \ inState , token ->
-                            nnn =
-                                when  token.token  is 
-                                    Character  val -> 
-                                        dbg  "character :  " 
-                                        dbg val 
-                                        4
-                                    Dot ->
-                                        dbg "Dot"
-                                        4
-                                    CaptureOpen ->
-                                        dbg "Capture  Open"
-                                        4
-                                    CaptureClose ->
-                                        dbg "Capture  Close"
-                                        4
-                                    Sequence  array  ->    
-                                        dbg  "seq  :  " 
-                                        dbg List.len array 
-                                        ll = printMe array
-                                        4
-                                    _ -> 
-                                    
-                                        dbg  "something else "
-                                        3
-                            ""
-                            )
-                        )
+    List.walk arrayPrt "" (  \ inState , token ->
+        when  token.token  is 
+            Character  val -> 
+                extractedChar = 
+                    when Str.fromUtf8 [val] is 
+                        Ok str -> str
+                        Err _ -> "  some weird problem in  extracting character token "
+                
+                Str.concat inState "\n"
+                |> Str.concat  "character : "
+                |> Str.concat  extractedChar  
+            Dot ->
+                Str.concat inState "\nDot"
+            CaptureOpen ->
+                Str.concat inState "\nCapture  Open"
+            CaptureClose ->
+                Str.concat inState "\nCapture  Close"
+            Sequence  array  ->    
+                Str.concat inState "\nseq : -> " 
+                |> Str.concat (printMe array)
+                |> Str.concat "\nexit sequence  <- "
+            _ -> 
+                "\n unknown token "
+))
+
+availableRegex = stagesCreationRegex [] 
+
+# maybe at some point add some additional error handling ??
+
+parseStr = \ str, pattern -> 
+    when availableRegex is 
+        Ok stage1Pat -> 
+            tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
+            
+            when tokensFromUserInputResult is 
+                Ok tokensFromUserInput ->
+                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
+                    # for now get longest maybe??
+                    
+                    Ok (List.walk independentChainlst { regex : [], current : [], matched : [], result : Bool.false, missed : [], left : [] , captured :[], meta : Inactive } ( \ state, regexParser ->  
+                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
+                        if state.result == Bool.true then
+                            if List.len parsResult.matched > List.len state.matched  then 
+                                parsResult
+                            else 
+                                state
+                            else 
+                                parsResult ))
+                Err message -> 
+                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
+
+        Err message -> 
+            Err  (Str.concat "This is internal regex error not your fault\n"  message )
+
 
 
 main =  
- 
-    stage1  = stagesCreationRegex []
-    kwas = 
-        when stage1 is 
-            Ok stage1Pat -> 
-                regexCreationStage2 "ds(.)r" stage1Pat  []
+    
+    outStr = 
+        when (parseStr  "dssrr"   "ds(.)r") is 
+            Ok result -> 
+                if result.result  == Bool.true  then
+                    "no match found"
+                else 
+                    # it is good to see current to investigate what actually matched  
+                    printMe result.current
                 
-            Err message -> 
-                Err message
-        
-        
-    dbg when kwas is 
-        Ok resPatt ->
-            dbg printMe resPatt
-            1
-        Err message -> 
-            dbg  message
-            0            
-    
-    #dbg stage1
-    #zenon =
-    #    when kwas  is 
-    #        Ok pat -> 
-    #            Ok (checkMatching (Str.toUtf8  "ds4rs" ) pat )
-                    
-    #        Err message -> 
-    #            Err message          
-    
-    #createToken  Pipe  Once Bool.false
-    #chain2  = [ createToken  (Character  11)  Once Bool.false, createToken  Pipe  Once Bool.false ,createToken  (Character  55)  Once Bool.false]
-    #chain1  = [createToken  (Character  11)  Once Bool.false , createToken  (Character  22)  Once Bool.false , createToken  Pipe  Once Bool.false,createToken  (Character  33)  Once Bool.false, createToken  ( Sequence chain2)  Once Bool.false  ] 
-
-    #result =
-        #splitChainOnPipes  chain1   [] 
-    #    splitChainOnPipes  [createToken  (Character  4)  Once Bool.false , createToken  ( Sequence chain1)  Once Bool.false, createToken  (Character  6)  Once Bool.false  ]   [] 
-    #ggg =
-    #    List.walk result "" (  \ state , resElem ->
-
-    #            ii = printMe  resElem
-    #            state 
-    #        )
-    
-    
-    #rama =
-    #    when zenon is 
-    #        Ok val ->
-                
-    #            dbg  val.result 
-    #           4
-    #        Err _ ->
-    #            4 
-    Stdout.line "adfasfsa"
+            Err message  -> message  
+                 
+    Stdout.line outStr
     
     
