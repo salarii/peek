@@ -5,7 +5,7 @@
     provides [main] to pf
 
 # simplified, one level capture, nothing more needed  in context of peek (at least for now ), it is just easy this way 
-# in  general more I dig into it, more and more corner cases come to a surface. I think I don't need to deal with all of them. I will limit myself to use cases vailid in context of peek app 
+# in  general more I dig into it, more and more corner cases come to the surface. I think I don't need to deal with all of them. I will limit myself to use cases vailid in context of peek app 
 # dbg crashing left and right on some of more complex object
 priorities =
     Dict.empty {}
@@ -16,7 +16,20 @@ priorities =
     |> Dict.insert CaptureClose 1
     |> Dict.insert AtLeastOne 1
     |> Dict.insert Separator 1
+    |> Dict.insert Digit 1
+    |> Dict.insert NoDigit 1
+    |> Dict.insert Alphanumeric 1
+    |> Dict.insert NoAlphanumeric 1
+    |> Dict.insert Whitespace 1
+    |> Dict.insert NoWhitespace 1
 
+charToUtf = \ char ->
+    Str.toUtf8 char
+    |> List.first
+    |> ( \ res ->
+        when res is 
+            Ok utf8 -> utf8
+            Err _ -> 0  )
 
 getPrioToken = \ patterns ->
     if List.isEmpty patterns then
@@ -133,11 +146,11 @@ checkMatching = \ utfLst, reg  ->
                 when checkRange utf lst is 
                     Within -> NoMatch
                     Outside -> Consume
-            Range lst ->
+            CharacterSet lst ->
                 when List.findFirst lst  ( \ char -> char == utf ) is 
                     Ok _ -> Consume
                     Err _ -> NoMatch 
-            NotInRange lst ->
+            NotInCharacterSet lst ->
                 when List.findFirst lst  ( \ char -> char == utf ) is 
                     Ok _ -> NoMatch
                     Err _ -> Consume    
@@ -320,9 +333,33 @@ firstStagePatterns = [
         { tag : CaptureOpen, str : "("},
         { tag : CaptureClose, str : ")"},
         { tag : AtLeastOne, str : "+" },
-        { tag : Separator, str : "|" }]
+        { tag : Separator, str : "|" },
+        { tag : Digit, str : "\\d" },
+        { tag : NoDigit, str : "\\D" },
+        { tag : Alphanumeric, str : "\\w" },
+        { tag : NoAlphanumeric, str : "\\W" },
+        { tag : Whitespace, str : "\\s" },
+        { tag : NoWhitespace, str : "\\S" }]
         
-secondStagePatterns = []    
+        
+#auxiliaryPatterns = 
+#    [ tag : CharacterSet, str : ".-."  ]
+#    |> List.concat regexSeedPattern
+     
+     
+#secondStagePatterns = [
+#    tag : Only,  str : "[.+]"
+#    tag : NotThis, str : "[^.+]"
+#]     
+        
+#thirdStagePatterns = [
+#    { tag : BackSlash, str : "\([.?{}^\*])" },
+#    { tag : Repetition, str : "{(\d)}" },
+#    { tag : RangeRepetition, str : "{(\d),(\d)}" }    
+#]    
+
+
+
 
 
 regexCreationStage = \ inPatterns, ignitionPatterns ->
@@ -332,25 +369,28 @@ regexCreationStage = \ inPatterns, ignitionPatterns ->
             when state is 
                 Ok patterns -> 
                     when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
-                        Ok result ->
-                            if (List.len result == 1 ) then
-                                when List.first result is 
-                                    Ok  elem  ->
-                                        when  getRegexTokens elem is 
+                        Ok results ->
+                            List.walk  results (Ok []) ( \ inState, result ->
+                                when inState is 
+                                    Ok patLst ->
+                                        when  getRegexTokens result is 
                                             Ok tokens -> 
                                                 workaround = 
                                                     List.walk  tokens [] ( \ workState, token -> 
                                                         List.append workState (createToken token.token token.serie  token.capture) ) 
-                                                 
-                                                
+                                                    
                                                 # !!!!!!!!!!! crashes  here Ok [{ tag : pat.tag, tokens : tokens }]
-                                                Ok (List.append patterns { tag : pat.tag, tokens : workaround } )    
-                                                
-                                            Err message -> Err message  
-
-                                    Err _ -> Err "can't be here"                
-                            else 
-                                Err "parsing regex keys problem"
+                                                Ok (List.concat patLst  workaround  )    
+                                                        
+                                            Err message -> Err message 
+                                    Err  message -> Err message     
+                                
+                            )
+                            |> (\ inTokensResult ->
+                                when  inTokensResult is 
+                                    Ok inTokens ->  
+                                        Ok ( List.append patterns { tag : pat.tag, tokens : inTokens } )
+                                    Err message ->  Err message )
 
                         Err Empty ->  Err "Empty" 
                         Err NoTokens ->  Err "NoTokens"
@@ -424,6 +464,21 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                     Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : Bool.false }
                                 Separator -> 
                                     Ok { state &  lst : modifLastInChain state.lst (createToken Separator Once Bool.false )  }
+                                
+                                Digit ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken Digit Once Bool.false )  }
+                                NoDigit ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken NoDigit Once Bool.false )  }
+                                Alphanumeric ->
+                                    limitRangToken = LimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' }]
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once Bool.false )  }
+                                NoAlphanumeric ->
+                                    limitRangToken = ReverseLimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' }]
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once Bool.false )  }
+                                Whitespace ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
+                                NoWhitespace ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
                                 AtLeastOne ->
                                     
                                     # this exist because of some failures in design
@@ -525,17 +580,29 @@ parseStr = \ str, pattern ->
 
 main =  
     
-    outStr = 
-        when (parseStr  "dssrr"   "ds(.)r") is 
-            Ok result -> 
-                if result.result  == Bool.true  then
-                    "no match found"
-                else 
+    #outStr = 
+    #    when (parseStr  "dssrr"   "ds(.)r") is 
+    #        Ok result -> 
+    #            if result.result  == Bool.true  then
+    #                "no match found"
+    #            else 
                     # it is good to see current to investigate what actually matched  
-                    printMe result.current
+    #                printMe result.current
                 
-            Err message  -> message  
-                 
-    Stdout.line outStr
+    #        Err message  -> message  
+    l = when  availableRegex  is 
+        Ok  rrr ->
+                dbg  List.len rrr
+                s = List.walk  rrr  1 ( \ state , cyk  -> 
+                            dbg  cyk.tag
+                            dbg  (printMe cyk.tokens )
+                            2
+                        
+                )  
+                2
+        Err _ ->  2
+            
+    
+    Stdout.line "outStr"
     
     
