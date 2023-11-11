@@ -4,6 +4,7 @@
     imports [pf.Stdout]
     provides [main] to pf
 
+# I highly prioritized implementation easines over performance (whenever there is a design choce)
 # simplified, one level capture, nothing more needed  in context of peek (at least for now ), it is just easy this way 
 # in  general more I dig into it, more and more corner cases come to the surface. I think I don't need to deal with all of them. I will limit myself to use cases vailid in context of peek app 
 # dbg crashing left and right on some of more complex object
@@ -30,6 +31,36 @@ charToUtf = \ char ->
         when res is 
             Ok utf8 -> utf8
             Err _ -> 0  )
+
+emptyNode = { locked : Bool.false, children :  [], value : [] }
+
+treeBase = 
+    {cnt : 0, content : Dict.empty {} }
+    |> addElement  0 emptyNode
+    
+createParsingRecord = \ regex, meta ->
+     { regex : regex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : No } 
+
+
+checkMatchingValidity = \ matchingResult ->
+    when matchingResult.strict is 
+        No -> Bool.true 
+        Front -> List.isEmpty  matchingResult.missed
+        Back -> List.isEmpty  matchingResult.left 
+        Both -> (List.isEmpty  matchingResult.missed) && (List.isEmpty  matchingResult.left)
+
+walkUntil : 
+    List elem, 
+    state,     
+    (state, 
+    elem
+    -> 
+        [
+            Continue state,
+            Break state
+        ])
+    -> state
+
 
 
 modifyLastInList = \ lst, elem ->
@@ -229,7 +260,7 @@ checkMatching = \ utfLst, reg  ->
                     Active { pattern : pat , state : state } 
                 Err _ ->
                     if state.meta == Origin then
-                        getFirstPat  { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed , left : state.left, captured : state.captured, meta : state.meta } 
+                        getFirstPat  { state & current : state.regex } 
                     else   
                         Inactive {state & meta : Inactive } )
 
@@ -245,16 +276,15 @@ checkMatching = \ utfLst, reg  ->
         )
 
     complexSearch = 
-        List.walk utfLst [{ regex : reg, current : reg, matched : [], result : Bool.false, missed : [], left : [] , captured : [], meta : Origin}]  ( \ outState, utf ->
+        List.walk utfLst [createParsingRecord reg Origin]  ( \ outState, utf ->
             updatedStates = updateRegex outState 
             
             List.walk updatedStates [] ( \ state, processedReg ->   
 
                 if processedReg.result == Bool.true then
-                    List.append state { regex : processedReg.regex, current : processedReg.current, matched : processedReg.matched, result : processedReg.result, missed : processedReg.missed , left : List.append  processedReg.left utf, captured : processedReg.captured, meta  : processedReg.meta} 
+                    List.append state { processedReg & left : List.append  processedReg.left utf} 
                 else
                     
-                     
                     manageIteration = ( \ inProcessedReg,curState -> 
                         when getFirstPat inProcessedReg is
                             Inactive patternSet ->
@@ -263,16 +293,12 @@ checkMatching = \ utfLst, reg  ->
                                 toUpdateState = matchThis.state  
                                 if matchThis.pattern.token == CaptureOpen then
                                     tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current 1}
-                                    captureUpdateOpen = 
-                                        if checkLastListEmpty tmpState.captured then
-                                            tmpState.captured
-                                        else 
-                                            List.append tmpState.captured []
-                                    manageIteration { tmpState &  captured : captureUpdateOpen }  curState
+
+                                    manageIteration { tmpState &  captured : (composeMatchedStructure tmpState.captured  0 CaptureOpen) }  curState
       
                                 else if matchThis.pattern.token == CaptureClose then
                                     tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current 1}    
-                                    manageIteration { tmpState &   captured : List.append tmpState.captured [] } curState
+                                    manageIteration { tmpState &   captured : composeMatchedStructure tmpState.captured  0 CaptureClose } curState
                                 else
 
                                     updatedState = matchThis.state
@@ -281,46 +307,35 @@ checkMatching = \ utfLst, reg  ->
                                     #dbg  (List.isEmpty current == Bool.true )
                                     updatedCapture =
                                         if matchThis.pattern.capture == Bool.true then
-                                            when List.last updatedState.captured is
-                                                Ok lst -> 
-                                                    modifyLastInList updatedState.captured (List.append lst utf)
-                                                Err _ ->
-                                                    updatedState.captured    
+                                            when  changeValue updatedState.captured 0 utf  is 
+                                                Ok updatedTree -> updatedTree
+                                                Err _ ->  updatedState.captured
                                         else
                                             updatedState.captured
                                     
                                     when matchUtf utf  matchThis.pattern is 
                                         Consume updatedToken ->
                                             if List.len current == 0 then
-                                                #{ updatedState & matched : Str.concat updatedState.matched utf, result : Bool.true  }
-                                                List.append curState { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : Bool.true , missed : updatedState.missed, left : [], captured : updatedCapture, meta : updatedState.meta}
-                                            else 
-                                                #{ updatedState & matched : Str.concat updatedState.matched utf, current : List.dropFirst  updatedState.current }
-                                                List.append curState { regex : updatedState.regex, matched : List.append updatedState.matched  utf, current : current, result : updatedState.result ,missed  : updatedState.missed, left : [], captured : updatedCapture, meta : updatedState.meta}
+                                                List.append curState { updatedState &  matched : List.append updatedState.matched  utf, current : current, result : Bool.true, left : [], captured : updatedCapture}
+                                            else
+                                                List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture} 
                                         NoMatch _ ->
-                                                #{ updatedState & current : updatedState.regex, matched : "" } )
-                                                noMatchCaptureUpdate =
-                                                    if checkLastListEmpty updatedState.captured then
-                                                        updatedState.captured
-                                                    else 
-                                                        List.dropLast updatedState.captured  1
-                                                List.append curState { regex : updatedState.regex, matched : [], current : updatedState.regex, result : updatedState.result , missed : List.append updatedState.missed utf, left : [], captured : noMatchCaptureUpdate, meta : updatedState.meta}
+
+                                                updateMissed = List.concat updatedState.missed  updatedState.matched
+                                                List.append curState { updatedState &  matched : [], current : updatedState.regex, missed : List.append updateMissed utf, left : [], captured : treeBase}
                                         _ -> curState  
                                 )
                     manageIteration processedReg state ) 
         )
-    List.walk complexSearch  { regex : reg, current : reg, matched : [], result : Bool.false, missed : [], left : [] , captured :[], meta : Inactive } ( \ state, parsResult -> 
+    List.walk complexSearch  (createParsingRecord reg Inactive) ( \ state, parsResult -> 
         if state.result == Bool.true then
-            if List.len parsResult.matched > List.len state.matched  then 
+            if (List.len parsResult.matched > List.len state.matched ) && (checkMatchingValidity state) then 
                 parsResult
             else 
                 state
         else 
             parsResult )
     
-
-#  Ok [{ parsedResult: { current: [], left: [], matched: [46], missed: [], regex: [{ capture: Bool.false, n: 0, serie: Once, token: Dot }], result: Bool.true }, tag: Character }]
-
 getRegexTokens = \ result  -> 
     when result.tag is 
         Character-> 
@@ -361,14 +376,11 @@ firstStagePatterns = [
 #    { tag : RangeRepetition, str : "{(\d),(\d)}" }    
 #]    
 
-
-
-
-
 regexCreationStage = \ inPatterns, ignitionPatterns ->
 
     regPatterns = 
         List.walk inPatterns (Ok []) ( \ state, pat->
+            dbg  pat
             when state is 
                 Ok patterns -> 
                     when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
@@ -380,11 +392,10 @@ regexCreationStage = \ inPatterns, ignitionPatterns ->
                                             Ok tokens -> 
                                                 workaround = 
                                                     List.walk  tokens [] ( \ workState, token -> 
-                                                        List.append workState (createToken token.token token.serie  token.capture) ) 
-                                                    
+                                                        List.append workState (createToken token.token token.serie  token.capture) )
                                                 # !!!!!!!!!!! crashes  here Ok [{ tag : pat.tag, tokens : tokens }]
                                                 Ok (List.concat patLst  workaround  )    
-                                                        
+
                                             Err message -> Err message 
                                     Err  message -> Err message     
                                 
@@ -552,33 +563,9 @@ availableRegex = stagesCreationRegex []
 
 # maybe at some point add some additional error handling ??
 
-parseStr = \ str, pattern -> 
-    when availableRegex is 
-        Ok stage1Pat -> 
-            tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
-            
-            when tokensFromUserInputResult is 
-                Ok tokensFromUserInput ->
-                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
-                    # for now get longest maybe??
-                    
-                    Ok (List.walk independentChainlst { regex : [], current : [], matched : [], result : Bool.false, missed : [], left : [] , captured :[], meta : Inactive } ( \ state, regexParser ->  
-                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
-                        if state.result == Bool.true then
-                            if List.len parsResult.matched > List.len state.matched  then 
-                                parsResult
-                            else 
-                                state
-                            else 
-                                parsResult ))
-                Err message -> 
-                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
-
-        Err message -> 
-            Err  (Str.concat "This is internal regex error not your fault\n"  message )
 
 # to be replaced 
-treeBase = {cnt : 0, content : Dict.empty {} }
+
 
 addElement = \ tree, parentId ,node -> 
     when Dict.get tree.content parentId  is 
@@ -646,9 +633,19 @@ modifyActive = \ tree, headId, op ->
                         
         Err _ -> Err  "wrong tree node id"
 
+
+changeValue = \ tree, id, value-> 
+    modify = 
+        \ idValue, treeValue ->
+            when Dict.get treeValue.content idValue is 
+                Ok node ->
+                    Ok (changeElement treeValue idValue {node & value : List.append node.value value  } )
+                Err _ -> Err  "internal logic error"
+
+    modifyActive tree id modify
+                    
 composeMatchedStructure = \ tree, id,tag ->
     
-    emptyNode = { locked : Bool.false, children :  [], value : [] }
     addNewNode = \ idNew, treeNew -> Ok (addElement treeNew idNew emptyNode)
     
     lockNode = 
@@ -657,15 +654,19 @@ composeMatchedStructure = \ tree, id,tag ->
                 Ok node ->
                     Ok (changeElement treeLocked idLock {node & locked : Bool.true } )
                 Err _ -> Err  "internal logic error"
-
-    when tag is 
-        CaptureOpen -> 
-            if Dict.isEmpty tree.content == Bool.false then 
-                modifyActive tree id addNewNode 
-            else 
-                Ok (addElement tree id emptyNode)
-        CaptureClose ->
-            modifyActive tree id lockNode
+    result = 
+        when tag is 
+            CaptureOpen -> 
+                if Dict.isEmpty tree.content == Bool.false then 
+                    modifyActive tree id addNewNode 
+                else
+                    Err  "internal logic error"
+            CaptureClose ->
+                modifyActive tree id lockNode
+    when result is
+        Ok newTree -> newTree
+        Err _  -> tree
+         
     
     
 #modifyActive = \ op, currentStructHead  ->
@@ -699,26 +700,56 @@ composeMatchedStructure = \ tree, id,tag ->
 #                            modifyLastInList lst { elem & locked : Bool.true} 
 #                        Err _ -> [] )
 #                 currentStructHead 
+
+parseStr = \ str, pattern -> 
+    when availableRegex is 
+        Ok stage1Pat -> 
+            tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
+            
+            when tokensFromUserInputResult is 
+                Ok tokensFromUserInput ->
+                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
+                    # for now get longest maybe??
+                    
+                    Ok (List.walk independentChainlst (createParsingRecord [] Inactive)  ( \ state, regexParser ->  
+                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
+                        if state.result == Bool.true then
+                            if List.len parsResult.matched > List.len state.matched  then 
+                                parsResult
+                            else 
+                                state
+                            else 
+                                parsResult ))
+                Err message -> 
+                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
+
+        Err message -> 
+            Err  (Str.concat "This is internal regex error not your fault\n"  message )
+
+
     
-        
 main =
-    
-    dbg when  composeMatchedStructure treeBase 0 CaptureOpen  is 
-        Ok result -> 
-            when composeMatchedStructure result 0 CaptureOpen is 
-                Ok result2 -> 
-                    when composeMatchedStructure result2 0 CaptureClose is
-                        Ok result3 -> 
-                            when composeMatchedStructure result3 0 CaptureOpen is
-                                Ok result4 -> 
-                                    when composeMatchedStructure result4 0 CaptureClose is
-                                        Ok result5 -> 
-                                            composeMatchedStructure result5 0 CaptureOpen
-                                        Err message -> Err message
-                                Err message -> Err message 
-                        Err message -> Err message 
-                Err message -> Err message 
-        Err message -> Err message   
+    pattern = "aaaa"
+    dbg  availableRegex
+    # glony  =
+    #    when availableRegex is 
+    #        Ok stage1Pat -> 
+    #            tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
+                
+    #            when tokensFromUserInputResult is 
+    #                Ok tokensFromUserInput ->
+                        # independentChainlst = splitChainOnSeparators tokensFromUserInput []
+    #                    Ok  3
+    #                Err message -> 
+    #                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
+
+    #        Err message -> 
+    #            Err  (Str.concat "This is internal regex error not your fault\n"  message )
+
+
+
+#    dbg when  composeMatchedStructure treeBase 0 CaptureOpen  is 
+
 
     #outStr = 
     #    when (parseStr  "dssrr"   "ds(.)r") is 
