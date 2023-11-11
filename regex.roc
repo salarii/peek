@@ -31,6 +31,12 @@ charToUtf = \ char ->
             Ok utf8 -> utf8
             Err _ -> 0  )
 
+
+modifyLastInList = \ lst, elem ->
+    List.dropLast lst 1
+    |> List.append elem
+
+
 getPrioToken = \ patterns ->
     if List.isEmpty patterns then
         Err NoTokens
@@ -69,7 +75,7 @@ splitChainOnSeparators = \ chain, inputLst ->
             when elem.token is 
                 Separator -> 
 
-                        List.walk ( splitChainOnSeparators (List.dropFirst chain) []) [] ( \ state, lst ->
+                        List.walk ( splitChainOnSeparators (List.dropFirst chain 1) []) [] ( \ state, lst ->
                             List.append state lst
                         )
                         |>   List.append []
@@ -78,14 +84,14 @@ splitChainOnSeparators = \ chain, inputLst ->
                     partialSeqResult =
                         List.walk ( splitChainOnSeparators inChain []) [] ( \ outState, frontLst ->                               
                             
-                            List.walk ( splitChainOnSeparators (List.dropFirst chain) []) outState ( \ state, lst ->                                
+                            List.walk ( splitChainOnSeparators (List.dropFirst chain 1) []) outState ( \ state, lst ->                                
                                 List.append state  ( List.concat [ {elem & token : Sequence frontLst } ]  lst) 
                             )        
                         )   
           
                     when List.last partialSeqResult is
                         Ok activElem ->
-                            List.dropLast partialSeqResult
+                            List.dropLast partialSeqResult 1
                             |> List.walk  [] ( \ state,  lst ->
                                 List.append state (List.concat inputLst lst))
                             |> List.append  activElem
@@ -95,15 +101,13 @@ splitChainOnSeparators = \ chain, inputLst ->
                 _ ->
 
                     partialResult =
-                        List.walk ( splitChainOnSeparators (List.dropFirst chain) (List.append inputLst elem )) [] ( \ state, lst ->
+                        List.walk ( splitChainOnSeparators (List.dropFirst chain 1) (List.append inputLst elem )) [] ( \ state, lst ->
                                 List.append state lst
                         )
 
                     when List.last partialResult is 
                         Ok lst -> 
-                            
-                            List.dropLast partialResult
-                            |> List.append  (List.concat [elem] lst) 
+                            modifyLastInList partialResult  (List.concat [elem] lst)  
                         Err _ -> 
                             []
                     
@@ -188,16 +192,16 @@ checkMatching = \ utfLst, reg  ->
                             when pat.serie is 
                                 AtLeastOne ->           
                                     changeFront = 
-                                        (List.dropFirst regItem.current)
+                                        (List.dropFirst regItem.current 1)
                                         |> List.prepend { pat & serie : ZeroOrMore }
                                         
                                     List.concat chain changeFront
                                     |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
                                 ZeroOrMore ->
 
-                                    List.append state {regItem & current : (List.dropFirst regItem.current)}  
+                                    List.append state {regItem & current : (List.dropFirst regItem.current 1)}  
                                     |> List.append 
-                                        (List.concat chain (List.dropFirst regItem.current)
+                                        (List.concat chain (List.dropFirst regItem.current 1)
                                         |> (\ updatedCurrent ->  {regItem & current : updatedCurrent, meta : Active} ))
                                 NTimes cnt -> 
                                     concatIter = (\ n , lst, stored ->
@@ -206,10 +210,10 @@ checkMatching = \ utfLst, reg  ->
                                         else 
                                             concatIter (n-1) lst (List.concat lst stored  ))
                                     
-                                    List.concat (concatIter cnt chain  [] ) (List.dropFirst regItem.current)
+                                    List.concat (concatIter cnt chain  [] ) (List.dropFirst regItem.current 1)
                                     |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
                                 Once ->
-                                    List.concat chain (List.dropFirst regItem.current)
+                                    List.concat chain (List.dropFirst regItem.current 1)
                                     |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
                         _ -> List.append state regItem
                     
@@ -258,7 +262,7 @@ checkMatching = \ utfLst, reg  ->
                             Active matchThis ->
                                 toUpdateState = matchThis.state  
                                 if matchThis.pattern.token == CaptureOpen then
-                                    tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current }
+                                    tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current 1}
                                     captureUpdateOpen = 
                                         if checkLastListEmpty tmpState.captured then
                                             tmpState.captured
@@ -267,20 +271,19 @@ checkMatching = \ utfLst, reg  ->
                                     manageIteration { tmpState &  captured : captureUpdateOpen }  curState
       
                                 else if matchThis.pattern.token == CaptureClose then
-                                    tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current }    
+                                    tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current 1}    
                                     manageIteration { tmpState &   captured : List.append tmpState.captured [] } curState
                                 else
 
                                     updatedState = matchThis.state
-                                    current = List.dropFirst  updatedState.current
+                                    current = List.dropFirst  updatedState.current  1
                                     #   !!!!!!!!  List.isEmpty current  crashes  here  
                                     #dbg  (List.isEmpty current == Bool.true )
                                     updatedCapture =
                                         if matchThis.pattern.capture == Bool.true then
                                             when List.last updatedState.captured is
                                                 Ok lst -> 
-                                                    List.dropLast updatedState.captured
-                                                    |> List.append (List.append lst utf)
+                                                    modifyLastInList updatedState.captured (List.append lst utf)
                                                 Err _ ->
                                                     updatedState.captured    
                                         else
@@ -300,7 +303,7 @@ checkMatching = \ utfLst, reg  ->
                                                     if checkLastListEmpty updatedState.captured then
                                                         updatedState.captured
                                                     else 
-                                                        List.dropLast updatedState.captured 
+                                                        List.dropLast updatedState.captured  1
                                                 List.append curState { regex : updatedState.regex, matched : [], current : updatedState.regex, result : updatedState.result , missed : List.append updatedState.missed utf, left : [], captured : noMatchCaptureUpdate, meta : updatedState.meta}
                                         _ -> curState  
                                 )
@@ -433,11 +436,10 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                                             CaptureClose -> 
                                                                 List.append chainLst token            
                                                             _ -> 
-                                                                List.dropLast chainLst
-                                                                |> List.append  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+                                                                modifyLastInList chainLst (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+
                                                     Err _ ->
-                                                        List.dropLast chainLst
-                                                        |> List.append  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+                                                        modifyLastInList  chainLst  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
                                             _ ->  
                                                 List.append chainLst token                  
                                     Err _ ->
@@ -487,13 +489,12 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                             Ok elem ->
                                                 when elem.token is 
                                                     CaptureClose ->
-                                                        when omitCaptureEnd ( List.dropLast inLst ) is 
+                                                        when omitCaptureEnd ( List.dropLast inLst  1) is 
                                                             Ok updatedLst ->
                                                                 Ok (List.append updatedLst elem)
                                                             Err message -> Err message 
                                                     _ ->
-                                                        Ok ( List.dropLast inLst
-                                                            |> List.append  {elem & serie : AtLeastOne } )
+                                                        Ok ( modifyLastInList inLst {elem & serie : AtLeastOne } )
                                                 
                                             Err _ -> Err "Wrong usage of + in pattern"        
                                         ) 
@@ -520,7 +521,7 @@ regexCreationStage2  = \ str, patterns, currReg ->
 #    checkMatching str reg  ->
 # create  patterns  and  than  parse  string with it     
 
-# dbg  not always  works so I  am using this : ) 
+# dbg does not always  works so I  am using this : ) 
 printMe = (  \ arrayPrt ->
     List.walk arrayPrt "" (  \ inState , token ->
         when  token.token  is 
@@ -576,10 +577,149 @@ parseStr = \ str, pattern ->
         Err message -> 
             Err  (Str.concat "This is internal regex error not your fault\n"  message )
 
+# to be replaced 
+treeBase = {cnt : 0, content : Dict.empty {} }
 
-
-main =  
+addElement = \ tree, parentId ,node -> 
+    when Dict.get tree.content parentId  is 
+        Ok element -> 
+            updatedContent = 
+                Dict.remove tree.content parentId
+                |> Dict.insert parentId {element  & children : (List.append element.children tree.cnt )}
+            
+            { cnt : tree.cnt + 1, content : (Dict.insert updatedContent  tree.cnt node )  }          
+        Err _ -> { cnt : tree.cnt + 1, content : Dict.insert tree.content  tree.cnt node }
     
+    
+changeElement = \ tree, id ,node -> 
+    when Dict.get tree.content id  is 
+        Ok element -> 
+            updatedContent = 
+                Dict.remove tree.content id
+                |> Dict.insert id node
+            
+            { tree & content : updatedContent }          
+        Err _ -> { cnt : tree.cnt + 1, content : Dict.insert tree.content  tree.cnt node }
+    
+
+getDirectly = \ tree, id  ->
+    when Dict.get tree.content id  is 
+        Ok node ->
+            Ok node.value  
+        Err _ -> Err  "no such value"
+
+getValue = \ indices, parentId, tree ->
+     
+    when List.first indices is 
+        Ok indice -> 
+            when Dict.get tree.content parentId  is 
+                Ok node ->
+                    when List.get node.children indice is 
+                        Ok childIdx -> 
+                            if List.len indices == 1 then
+                                getDirectly tree childIdx
+                            else
+                                getValue (List.dropFirst indices 1) childIdx tree 
+                        Err _ -> Err  "no such value"                              
+                Err _ -> Err  "no such value"
+    
+        Err _ ->  Err  "no such value"
+     
+
+
+modifyActive = \ tree, headId, op ->
+    when Dict.get tree.content headId  is 
+        Ok head -> 
+            if List.isEmpty head.children == Bool.true then
+                op headId tree
+            else 
+                when List.last head.children is 
+                    Ok nodeId ->
+                        when Dict.get tree.content nodeId is 
+                            Ok child ->
+                                if child.locked == Bool.true then
+                                    op headId tree
+                                else 
+                                    modifyActive tree nodeId op
+                            Err _ -> Err  "internal logic error"
+                    Err _ -> Err  "internal logic error"
+                        
+        Err _ -> Err  "wrong tree node id"
+
+composeMatchedStructure = \ tree, id,tag ->
+    
+    emptyNode = { locked : Bool.false, children :  [], value : [] }
+    addNewNode = \ idNew, treeNew -> Ok (addElement treeNew idNew emptyNode)
+    
+    lockNode = 
+        \ idLock, treeLocked ->
+            when Dict.get treeLocked.content idLock is 
+                Ok node ->
+                    Ok (changeElement treeLocked idLock {node & locked : Bool.true } )
+                Err _ -> Err  "internal logic error"
+
+    when tag is 
+        CaptureOpen -> 
+            if Dict.isEmpty tree.content == Bool.false then 
+                modifyActive tree id addNewNode 
+            else 
+                Ok (addElement tree id emptyNode)
+        CaptureClose ->
+            modifyActive tree id lockNode
+    
+    
+#modifyActive = \ op, currentStructHead  ->
+#    Node  head = currentStructHead
+#    dbg  head
+#    updatedLst = 
+#        if List.isEmpty head.children == Bool.true then
+#            op head.children
+#        else 
+#            when List.last head.children is 
+#                Ok node ->
+#                    Node child = node 
+#                        if child.locked == Bool.true then
+#                            op head.children
+#                        else 
+#                            modifyLastInList head.children  (modifyActive op  node )                                   
+#                Err _ -> []           
+#    Node {head & children : updatedLst }
+ 
+ 
+
+#composeMatchedStructure = \ tag, currentStructHead -> 
+#    when tag is 
+#        CaptureOpen -> 
+#            modifyActive (\ lst -> List.append lst { locked : Bool.false, children : Children [], value : [] } ) currentStructHead
+#        CaptureClose ->
+#            modifyActive
+#                 (\ lst ->
+#                    when List.last lst is 
+#                        Ok elem ->
+#                            modifyLastInList lst { elem & locked : Bool.true} 
+#                        Err _ -> [] )
+#                 currentStructHead 
+    
+        
+main =
+    
+    dbg when  composeMatchedStructure treeBase 0 CaptureOpen  is 
+        Ok result -> 
+            when composeMatchedStructure result 0 CaptureOpen is 
+                Ok result2 -> 
+                    when composeMatchedStructure result2 0 CaptureClose is
+                        Ok result3 -> 
+                            when composeMatchedStructure result3 0 CaptureOpen is
+                                Ok result4 -> 
+                                    when composeMatchedStructure result4 0 CaptureClose is
+                                        Ok result5 -> 
+                                            composeMatchedStructure result5 0 CaptureOpen
+                                        Err message -> Err message
+                                Err message -> Err message 
+                        Err message -> Err message 
+                Err message -> Err message 
+        Err message -> Err message   
+
     #outStr = 
     #    when (parseStr  "dssrr"   "ds(.)r") is 
     #        Ok result -> 
@@ -590,17 +730,17 @@ main =
     #                printMe result.current
                 
     #        Err message  -> message  
-    l = when  availableRegex  is 
-        Ok  rrr ->
-                dbg  List.len rrr
-                s = List.walk  rrr  1 ( \ state , cyk  -> 
-                            dbg  cyk.tag
-                            dbg  (printMe cyk.tokens )
-                            2
+   # l = when  availableRegex  is 
+    #    Ok  rrr ->
+                #dbg  List.len rrr
+     #           s = List.walk  rrr  1 ( \ state , cyk  -> 
+                            #dbg  cyk.tag
+                            #dbg  (printMe cyk.tokens )
+      #                      2
                         
-                )  
-                2
-        Err _ ->  2
+       #         )  
+       #         2
+       # Err _ ->  2
             
     
     Stdout.line "outStr"
