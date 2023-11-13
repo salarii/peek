@@ -4,10 +4,42 @@
     imports [pf.Stdout]
     provides [main] to pf
 
-# I highly prioritized implementation easines over performance (whenever there is a design choce)
-# simplified, one level capture, nothing more needed  in context of peek (at least for now ), it is just easy this way 
+# I highly prioritized implementation easines over performance (whenever there is a design choce) 
 # in  general more I dig into it, more and more corner cases come to the surface. I think I don't need to deal with all of them. I will limit myself to use cases vailid in context of peek app 
 # dbg crashing left and right on some of more complex object
+
+
+firstStagePatterns = [
+        { tag : Dot, str : "."},
+        { tag : CaptureOpen, str : "("},
+        { tag : CaptureClose, str : ")"},
+        { tag : AtLeastOne, str : "+" },
+        { tag : Separator, str : "|" },
+        { tag : Digit, str : "\\d" },
+        { tag : NoDigit, str : "\\D" },
+        { tag : Alphanumeric, str : "\\w" },
+        { tag : NoAlphanumeric, str : "\\W" },
+        { tag : Whitespace, str : "\\s" },
+        { tag : NoWhitespace, str : "\\S" }]
+        
+        
+#auxiliaryPatterns = 
+#    [ tag : CharacterSet, str : ".-."  ]
+#    |> List.concat regexSeedPattern
+     
+     
+#secondStagePatterns = [
+#    tag : Only,  str : "[.+]"
+#    tag : NotThis, str : "[^.+]"
+#]     
+        
+#thirdStagePatterns = [
+#    { tag : BackSlash, str : "\([.?{}^\*])" },
+#    { tag : Repetition, str : "{(\d)}" },
+#    { tag : RangeRepetition, str : "{(\d),(\d)}" }    
+#]   
+
+
 priorities =
     Dict.empty {}
     |> Dict.insert Empty -1
@@ -146,13 +178,14 @@ splitChainOnSeparators = \ chain, inputLst ->
             [[]]
         
 
+    
 evalRegex = \ utfLst, patterns, regex ->
     if List.isEmpty utfLst then
         Ok regex
     else
         List.walk patterns [] ( \ state, pattern ->
             out = checkMatching utfLst pattern.tokens
-            if out.result == Bool.true  && List.isEmpty out.missed then
+            if out.result == Bool.true   && List.isEmpty out.missed then
                 List.append state { tag : pattern.tag, parsedResult : out } 
             else
                 state 
@@ -260,9 +293,13 @@ checkMatching = \ utfLst, reg  ->
                     Active { pattern : pat , state : state } 
                 Err _ ->
                     if state.meta == Origin then
-                        getFirstPat  { state & current : state.regex } 
+                        # BUG  in this  line
+                        # getFirstPat  { state & current : state.regex } 
+                        getFirstPat  { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed, left : state.left, captured : state.captured, meta : state.meta, strict : state.strict } 
+
                     else   
-                        Inactive {state & meta : Inactive } )
+                        Inactive {state & meta : Inactive } 
+            )
 
 
 
@@ -277,15 +314,16 @@ checkMatching = \ utfLst, reg  ->
 
     complexSearch = 
         List.walk utfLst [createParsingRecord reg Origin]  ( \ outState, utf ->
+            
             updatedStates = updateRegex outState 
             
             List.walk updatedStates [] ( \ state, processedReg ->   
-
+                
                 if processedReg.result == Bool.true then
                     List.append state { processedReg & left : List.append  processedReg.left utf} 
-                else
-                    
-                    manageIteration = ( \ inProcessedReg,curState -> 
+                else   
+                    manageIteration = ( \ inProcessedReg,curState ->
+                  
                         when getFirstPat inProcessedReg is
                             Inactive patternSet ->
                                 List.append curState inProcessedReg
@@ -295,16 +333,18 @@ checkMatching = \ utfLst, reg  ->
                                     tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current 1}
 
                                     manageIteration { tmpState &  captured : (composeMatchedStructure tmpState.captured  0 CaptureOpen) }  curState
-      
+                                    
                                 else if matchThis.pattern.token == CaptureClose then
+                                    
                                     tmpState = {toUpdateState & current : List.dropFirst toUpdateState.current 1}    
                                     manageIteration { tmpState &   captured : composeMatchedStructure tmpState.captured  0 CaptureClose } curState
                                 else
-
+                                    
                                     updatedState = matchThis.state
                                     current = List.dropFirst  updatedState.current  1
-                                    #   !!!!!!!!  List.isEmpty current  crashes  here  
-                                    #dbg  (List.isEmpty current == Bool.true )
+                                    #   BUG  this  crashes 
+                                    #ppp = List.isEmpty current == Bool.true 
+                                    
                                     updatedCapture =
                                         if matchThis.pattern.capture == Bool.true then
                                             when  changeValue updatedState.captured 0 utf  is 
@@ -320,9 +360,12 @@ checkMatching = \ utfLst, reg  ->
                                             else
                                                 List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture} 
                                         NoMatch _ ->
-
+                                                
                                                 updateMissed = List.concat updatedState.missed  updatedState.matched
-                                                List.append curState { updatedState &  matched : [], current : updatedState.regex, missed : List.append updateMissed utf, left : [], captured : treeBase}
+                                                # BUG this line 
+                                                #List.append curState { updatedState &  matched : [], current : updatedState.regex, missed : List.append updateMissed utf, left : [], captured : treeBase}
+                                                List.append curState { regex : updatedState.regex, current : updatedState.regex, matched : [], result : updatedState.result, missed : updatedState.missed, left : updatedState.left, captured : treeBase, meta : updatedState.meta, strict : updatedState.strict }
+                                                
                                         _ -> curState  
                                 )
                     manageIteration processedReg state ) 
@@ -346,41 +389,12 @@ getRegexTokens = \ result  ->
         _ -> Err "wrong tag"
 
 
-firstStagePatterns = [
-        { tag : Dot, str : "."},
-        { tag : CaptureOpen, str : "("},
-        { tag : CaptureClose, str : ")"},
-        { tag : AtLeastOne, str : "+" },
-        { tag : Separator, str : "|" },
-        { tag : Digit, str : "\\d" },
-        { tag : NoDigit, str : "\\D" },
-        { tag : Alphanumeric, str : "\\w" },
-        { tag : NoAlphanumeric, str : "\\W" },
-        { tag : Whitespace, str : "\\s" },
-        { tag : NoWhitespace, str : "\\S" }]
-        
-        
-#auxiliaryPatterns = 
-#    [ tag : CharacterSet, str : ".-."  ]
-#    |> List.concat regexSeedPattern
-     
-     
-#secondStagePatterns = [
-#    tag : Only,  str : "[.+]"
-#    tag : NotThis, str : "[^.+]"
-#]     
-        
-#thirdStagePatterns = [
-#    { tag : BackSlash, str : "\([.?{}^\*])" },
-#    { tag : Repetition, str : "{(\d)}" },
-#    { tag : RangeRepetition, str : "{(\d),(\d)}" }    
-#]    
+ 
 
 regexCreationStage = \ inPatterns, ignitionPatterns ->
 
     regPatterns = 
         List.walk inPatterns (Ok []) ( \ state, pat->
-            dbg  pat
             when state is 
                 Ok patterns -> 
                     when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
@@ -730,25 +744,14 @@ parseStr = \ str, pattern ->
     
 main =
     pattern = "aaaa"
-    dbg  availableRegex
-    # glony  =
-    #    when availableRegex is 
-    #        Ok stage1Pat -> 
-    #            tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
-                
-    #            when tokensFromUserInputResult is 
-    #                Ok tokensFromUserInput ->
-                        # independentChainlst = splitChainOnSeparators tokensFromUserInput []
-    #                    Ok  3
-    #                Err message -> 
-    #                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
-
-    #        Err message -> 
-    #            Err  (Str.concat "This is internal regex error not your fault\n"  message )
+    pp =  parseStr  "sss"   "a"
+    # BUG  as usuall problem with dbg     
+    #dbg  pp 
+    
 
 
 
-#    dbg when  composeMatchedStructure treeBase 0 CaptureOpen  is 
+
 
 
     #outStr = 
