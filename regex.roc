@@ -22,6 +22,13 @@ firstStagePatterns = [
         { tag : Whitespace, str : "\\s" },
         { tag : NoWhitespace, str : "\\S" }]
         
+
+auxiliaryPatterns1 = [ {tag : Only,  str : "[(.+)]" } ]
+ 
+secondStagePatterns =  [
+    { tag : BackSlash, str : "\\([.?{}^*])" },  # " 
+    { tag : Repetition, str : "{(\\d)}"},   #"   
+    { tag : RangeRepetition, str : "{(\\d),(\\d)}" } ]  # "
         
 #auxiliaryPatterns = 
 #    [ tag : CharacterSet, str : ".-."  ]
@@ -55,7 +62,8 @@ priorities =
     |> Dict.insert NoAlphanumeric 1
     |> Dict.insert Whitespace 1
     |> Dict.insert NoWhitespace 1
-
+    |> Dict.insert Only 2
+    
 charToUtf = \ char ->
     Str.toUtf8 char
     |> List.first
@@ -183,9 +191,11 @@ evalRegex = \ utfLst, patterns, regex ->
     if List.isEmpty utfLst then
         Ok regex
     else
+ 
         List.walk patterns [] ( \ state, pattern ->
             out = checkMatching utfLst pattern.tokens
-            if out.result == Bool.true   && List.isEmpty out.missed then
+            
+            if out.result == Bool.true  && List.isEmpty out.missed then
                 List.append state { tag : pattern.tag, parsedResult : out } 
             else
                 state 
@@ -301,8 +311,6 @@ checkMatching = \ utfLst, reg  ->
                         Inactive {state & meta : Inactive } 
             )
 
-
-
     checkLastListEmpty = (\ listOfLists  ->
             when List.last listOfLists is
                 Ok lst -> 
@@ -360,11 +368,15 @@ checkMatching = \ utfLst, reg  ->
                                             else
                                                 List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture} 
                                         NoMatch _ ->
+
                                                 
-                                                updateMissed = List.concat updatedState.missed  updatedState.matched
+                                                updateMissed = 
+                                                    List.concat updatedState.missed  updatedState.matched
+                                                    |> List.append  utf
+
                                                 # BUG this line 
                                                 #List.append curState { updatedState &  matched : [], current : updatedState.regex, missed : List.append updateMissed utf, left : [], captured : treeBase}
-                                                List.append curState { regex : updatedState.regex, current : updatedState.regex, matched : [], result : updatedState.result, missed : updatedState.missed, left : updatedState.left, captured : treeBase, meta : updatedState.meta, strict : updatedState.strict }
+                                                List.append curState { regex : updatedState.regex, current : updatedState.regex, matched : [], result : updatedState.result, missed : updateMissed, left : updatedState.left, captured : treeBase, meta : updatedState.meta, strict : updatedState.strict }
                                                 
                                         _ -> curState  
                                 )
@@ -380,13 +392,23 @@ checkMatching = \ utfLst, reg  ->
             parsResult )
     
 getRegexTokens = \ result  -> 
+    dbg  result.tag
     when result.tag is 
         Character-> 
             when List.first result.parsedResult.matched is 
-                Ok  matched  -> Ok [(createToken  ( Character matched )  Once Bool.false )]
+                Ok  matched  -> 
+                    Ok [(createToken  ( Character matched )  Once Bool.false )]
                 Err  _  -> Err "character  tag problem"
-            
-        _ -> Err "wrong tag"
+        Dot->
+                Ok [(createToken  Dot  Once Bool.false )]      
+        AtLeastOne -> 
+                Ok [(createToken  AtLeastOne  Once Bool.false )]
+        CaptureOpen ->
+                Ok [(createToken  CaptureOpen  Once Bool.false )]
+        CaptureClose ->
+                Ok [(createToken  CaptureClose  Once Bool.false )]
+        _ -> 
+            Err "wrong tag"
 
 
  
@@ -399,6 +421,7 @@ regexCreationStage = \ inPatterns, ignitionPatterns ->
                 Ok patterns -> 
                     when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
                         Ok results ->
+                            
                             List.walk  results (Ok []) ( \ inState, result ->
                                 when inState is 
                                     Ok patLst ->
@@ -431,14 +454,17 @@ regexCreationStage = \ inPatterns, ignitionPatterns ->
     
     
 stagesCreationRegex  = \ _param -> 
-    regexCreationStage firstStagePatterns regexSeedPattern
-    #stage1  = regexCreationStage firstStagePatterns regexSeedPattern
-    #when stage1 is 
-    #    Ok stage1Pat -> 
-    #        regexCreationStage secondStagePatterns stage1Pat
+    stage1 = regexCreationStage firstStagePatterns regexSeedPattern
+    
+    when stage1 is 
+        Ok stage1Pat -> 
+#secondStagePatterns
+            dbg  "auxiliary" 
+            dbg  regexCreationStage auxiliaryPatterns1 stage1Pat
+            regexCreationStage auxiliaryPatterns1 stage1Pat
                 
-    #    Err message -> 
-    #        Err message
+        Err message -> 
+            Err message
 
 
 regexCreationStage2  = \ str, patterns, currReg ->
@@ -506,6 +532,8 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
+                                Only -> 
+                                    Ok state 
                                 AtLeastOne ->
                                     
                                     # this exist because of some failures in design
@@ -540,11 +568,6 @@ regexCreationStage2  = \ str, patterns, currReg ->
             Err PriorityListErr ->  Err "PriorityListErr"
     )
     
-    
-
-    
-#    checkMatching str reg  ->
-# create  patterns  and  than  parse  string with it     
 
 # dbg does not always  works so I  am using this : ) 
 printMe = (  \ arrayPrt ->
