@@ -4,10 +4,19 @@
     imports [pf.Stdout]
     provides [main] to pf
 
-# I highly prioritized implementation easines over performance (whenever there is a design choce) 
-# in  general more I dig into it, more and more corner cases come to the surface. I think I don't need to deal with all of them. I will limit myself to use cases vailid in context of peek app 
-# dbg crashing left and right on some of more complex object
+# I highly prioritized implementation easiness over performance
+# this is questionable provided that peek may use matching in extensive way 
+# This choice saves mental effort and makes this work possible to be completed 
+# I plan to add other means, to enable peek user to be relatively effective time wise anyway 
 
+# I was not interested to recreate regex with all it potential and pitfalls 
+# what I want is to make it work for 99% cases user will require
+
+
+# side note:
+# dbg crashing left and right on many complex objects
+# I need to run it after some time, with many dbg commands put all over the place,
+# to verify improvements
 
 firstStagePatterns = [
         { tag : Dot, str : "."},
@@ -257,8 +266,6 @@ checkMatching = \ utfLst, reg  ->
     matchUtf = ( \ utf, tokenMeta ->
 
         result = matchStr utf tokenMeta.token
-        dbg  "match"
-        dbg  printMe  [tokenMeta]
        
         when result is
             Consume -> Consume tokenMeta 
@@ -270,7 +277,6 @@ checkMatching = \ utfLst, reg  ->
     updateRegex = (\regex ->  
     
         updateRegexItemInternal = ( \ state, regItem ->
-                dbg  "updateRegexItemInternal"
                 # workaround for design error 
                 checkIfNextCapture = (\  checkReg ->
                     when List.first checkReg.current is 
@@ -290,8 +296,7 @@ checkMatching = \ utfLst, reg  ->
                                 stored
                             else 
                                 concatIter (n-1) lst (List.concat lst stored  ))
-                        dbg  "update  regex"
-                        dbg  printMe  [pat]
+
                         when pat.token  is
                             CaptureOpen ->
                                 tmpState = {regItem & current : List.dropFirst regItem.current 1}
@@ -389,13 +394,9 @@ checkMatching = \ utfLst, reg  ->
         List.walk utfLst [createParsingRecord reg Origin]  ( \ outState, utf ->
             
             updatedStates = updateRegex outState 
-            dbg  "current sign"
-            dbg  utf
-            dbg  List.len updatedStates  
 
-            
             List.walk updatedStates [] ( \ state, processedReg ->   
-                dbg  "processing"
+
                 if processedReg.result == Bool.true then
                     List.append state { processedReg & left : List.append  processedReg.left utf} 
                 else   
@@ -406,22 +407,18 @@ checkMatching = \ utfLst, reg  ->
                                 List.append curState inProcessedReg
                             Active matchThis ->                                    
                                     updatedState = matchThis.state
-                                    dbg  printMe updatedState.current   
+  
                                     current = List.dropFirst  updatedState.current  1
                                     #   BUG  this  crashes 
                                     #ppp = List.isEmpty current == Bool.true 
                                     
                                     updatedCapture =
                                         if matchThis.pattern.capture == Bool.true then
-                                            when  changeValue updatedState.captured 0 utf  is 
-                                                Ok updatedTree -> updatedTree
-                                                Err _ ->  updatedState.captured
+                                            changeValue updatedState.captured 0 utf  
                                         else
                                             updatedState.captured
                                     when matchUtf utf  matchThis.pattern is 
                                         Consume updatedToken ->
-                                            dbg  "consume"
-                                            dbg List.len current 
                                              
                                             if List.len current == 0 then
                                                 List.append curState { updatedState &  matched : List.append updatedState.matched  utf, current : current, result : Bool.true, left : [], captured : updatedCapture}
@@ -513,8 +510,14 @@ regexCreationStage = \ inPatterns, ignitionPatterns ->
     
     
 stagesCreationRegex  = \ _param -> 
+    
+    # this is not really needed 
+    # all patterns could be placed in regexSeedPattern right out of the bat (in token form)
+    # but this approach has some benefits:
+    # - quite decent self validation during development
+    # - additional restrictions which limit unbounded sea of possibilities during design phase
+    # - patterns are easy to recognize from their's string form
     stage1 = regexCreationStage firstStagePatterns regexSeedPattern
-    dbg  stage1
     when stage1 is 
         Ok stage1Pat ->
             patternAux1Result = regexCreationStage2 aux1Patt stage1Pat  []
@@ -602,6 +605,8 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
                                 Only -> 
+                                    dbg "only\n\n"
+                                    dbg result.parsedResult.captured  
                                     Ok state
                                 BackSlash-> 
                                     Ok state
@@ -698,6 +703,13 @@ getDirectly = \ tree, id  ->
             Ok node.value  
         Err _ -> Err  "no such value"
 
+getDirectlyChildrenCnt = \ tree, id  ->
+    when Dict.get tree.content id  is 
+        Ok node ->
+            Ok (List.len node.children )  
+        Err _ -> Err  "no such node"
+
+
 getValue = \ indices, parentId, tree ->
      
     when List.first indices is 
@@ -745,7 +757,86 @@ changeValue = \ tree, id, value->
                     Ok (changeElement treeValue idValue {node & value : List.append node.value value  } )
                 Err _ -> Err  "internal logic error"
 
-    modifyActive tree id modify
+    when modifyActive tree id modify is 
+        Ok newTree -> newTree
+        _ -> tree
+         
+
+         
+#  createToken (CharacterSet ( LimitRanges [{ { left : 'A', right : 'Z' },
+#                (createToken (CharacterSet val) Once Bool.false )))
+createOnlyOutOfTree =  \ tree ->
+    errMess = "Only token problem:  "
+    when Dict.get tree.content 0  is 
+        Ok head ->
+            codexResult = List.walk head.children (Ok { characterSet : [], limitRanges : [] }) ( \ state, childId ->
+                when state is 
+                    Ok items ->
+                            
+                        when getDirectlyChildrenCnt tree childId is 
+                            Ok  cnt ->
+                                
+                                    if cnt == 1 then 
+                                        when  (getValue [0] childId tree) is 
+                                            Ok val -> 
+                                                Ok { items & characterSet :  List.concat items.characterSet  val  }
+                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value" )
+
+                                    else if cnt == 2 then
+                                        getFirst = (\  valLst ->
+                                            when List.first valLst is 
+                                                Ok val -> Ok val
+                                                Err _ -> Err  "no value"
+                                            )
+                                                                      
+                                        when (getValue [0] childId tree) is    
+                                            Ok val1Lst -> 
+                                                when getFirst val1Lst is
+                                                    Ok val1 ->
+                                                        when (getValue [1] childId tree)  is
+                                                            Ok val2Lst ->
+                                                                when getFirst val2Lst is
+                                                                    Ok val2 -> 
+                                                                        Ok { items & limitRanges :  List.append items.limitRanges  { left : val1, right : val2 } }
+                                                                        
+                                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
+                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
+                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
+                                                    
+                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
+
+                                    else 
+                                        Err (Str.concat errMess "wrong second level child structure" )
+                            Err _ -> Err (Str.concat errMess "wrong second level child structure" )
+                                
+                    Err  message -> Err  message  
+    
+                )
+            when  codexResult is 
+                Ok codex  ->
+                    if List.isEmpty codex.characterSet == Bool.false &&
+                        List.isEmpty codex.limitRanges == Bool.false then
+                        chain =
+                            []
+                            |> List.append (createToken CaptureOpen Once Bool.false )
+                            |> List.append (createToken (CharacterSet codex.characterSet) Once Bool.false )
+                            |> List.append (createToken CaptureClose Once Bool.false )
+                            |> List.append (createToken Separator Once Bool.false )
+                            |> List.append (createToken CaptureOpen Once Bool.false )
+                            |> List.append (createToken (LimitRanges codex.limitRanges) Once Bool.false )
+                            |> List.append (createToken CaptureClose Once Bool.false )
+                            
+                        Ok (createToken (Sequence  chain) Once Bool.false )
+        
+                    else if List.isEmpty codex.characterSet == Bool.false then 
+                        Ok (createToken (CharacterSet codex.characterSet) Once Bool.false ) 
+                    else if List.isEmpty codex.limitRanges == Bool.false then
+                        Ok (createToken (LimitRanges codex.limitRanges) Once Bool.false )
+                    else 
+                        Err (Str.concat errMess "empty tree") 
+                    
+                Err message -> Err message
+        Err _ -> Err  (Str.concat errMess "not right format of tree")
                     
 composeMatchedStructure = \ tree, id,tag ->
     
@@ -838,45 +929,36 @@ main =
     pattern = "aaaa"
     # pp =  parseStr  "sss"   "a"
     
-    #dbg  availableRegex
+    testModify = ( \ tree,fun, value  -> 
+        fun tree  0 value )
+            
+    res = 
+        testModify  treeBase  composeMatchedStructure   CaptureOpen  
+        |> testModify  composeMatchedStructure   CaptureOpen
+        |> testModify  changeValue  1
+        |> testModify  composeMatchedStructure   CaptureClose
+        |> testModify  composeMatchedStructure   CaptureOpen
+        |> testModify  changeValue  10
+        |> testModify  composeMatchedStructure   CaptureClose
+        |> testModify  composeMatchedStructure   CaptureClose
+        |> testModify  composeMatchedStructure   CaptureOpen
+        |> testModify  composeMatchedStructure   CaptureOpen
+        |> testModify  changeValue  3
+        |> testModify  changeValue  100
+        |> testModify  composeMatchedStructure   CaptureClose
+        |> testModify  composeMatchedStructure   CaptureClose
+    dbg  res
+    dbg createOnlyOutOfTree res 
     
-    pat  = [(createToken  ( Character '[' )  Once Bool.false ),createToken  CaptureOpen  AtLeastOne Bool.false ,createToken  (Sequence  [createToken  Dot  AtLeastOne Bool.false] ) AtLeastOne Bool.false ,createToken  CaptureClose  AtLeastOne Bool.false, createToken  ( Character ']' )  AtLeastOne Bool.false ]
-    dbg  printMe  pat 
-    result  = checkMatching (Str.toUtf8  "[a]" )   pat
-    dbg  result.matched
-    dbg  result.result
+    #pat  = [(createToken  ( Character '[' )  Once Bool.false ),createToken  CaptureOpen  AtLeastOne Bool.false ,createToken  (Sequence  [createToken  ( Character 'q' )  Once Bool.false,createToken  Dot  AtLeastOne Bool.false] ) AtLeastOne Bool.false ,createToken  CaptureClose  AtLeastOne Bool.false, createToken  ( Character ']' )  AtLeastOne Bool.false ]
+    #dbg  printMe  pat 
+    #result  = checkMatching (Str.toUtf8  "fdgfdsghf]dhgfdhgf[qagfdbvgfd]" )   pat
+    #dbg  result.matched
+    #dbg  result.result
     # BUG  as usuall problem with dbg     
     #dbg  pp 
     
-
-
-
-
-
-
-    #outStr = 
-    #    when (parseStr  "dssrr"   "ds(.)r") is 
-    #        Ok result -> 
-    #            if result.result  == Bool.true  then
-    #                "no match found"
-    #            else 
-                    # it is good to see current to investigate what actually matched  
-    #                printMe result.current
                 
-    #        Err message  -> message  
-   # l = when  availableRegex  is 
-    #    Ok  rrr ->
-                #dbg  List.len rrr
-     #           s = List.walk  rrr  1 ( \ state , cyk  -> 
-                            #dbg  cyk.tag
-                            #dbg  (printMe cyk.tokens )
-      #                      2
-                        
-       #         )  
-       #         2
-       # Err _ ->  2
-            
-    
     Stdout.line "outStr"
     
     
