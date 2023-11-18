@@ -33,9 +33,7 @@ firstStagePatterns = [
         
 # second  stage  patterns
 # temporary Only
-aux1Patt =  "[(.+)]"
-
-auxBackSlash = "\\[.?{}^*]"
+aux1Patt =  "[((.+)a)]"
 
 secondStagePatterns =  [
     { tag : BackSlash, str : "\\[.?{}^*]" } ] # " 
@@ -264,7 +262,9 @@ checkMatching = \ utfLst, reg  ->
             _ -> NoMatch
     
     matchUtf = ( \ utf, tokenMeta ->
-
+        dbg  "match  utf "
+        dbg  utf
+        dbg  printMe [tokenMeta]
         result = matchStr utf tokenMeta.token
        
         when result is
@@ -272,22 +272,8 @@ checkMatching = \ utfLst, reg  ->
             NoMatch -> NoMatch tokenMeta 
     )
 
-
-
     updateRegex = (\regex ->  
-    
         updateRegexItemInternal = ( \ state, regItem ->
-                # workaround for design error 
-                checkIfNextCapture = (\  checkReg ->
-                    when List.first checkReg.current is 
-                        Ok pat ->
-                            when pat.token  is
-                                CaptureOpen | CaptureClose ->
-                                    updateRegexItemInternal [] checkReg
-                                _ ->  
-                                    [checkReg]
-                        Err _ -> [checkReg]
-                )
                 
                 when List.first regItem.current is 
                     Ok pat ->
@@ -296,7 +282,8 @@ checkMatching = \ utfLst, reg  ->
                                 stored
                             else 
                                 concatIter (n-1) lst (List.concat lst stored  ))
-
+                        dbg "pat  token "
+                        dbg  printMe [pat]
                         when pat.token  is
                             CaptureOpen ->
                                 tmpState = {regItem & current : List.dropFirst regItem.current 1}
@@ -311,29 +298,34 @@ checkMatching = \ utfLst, reg  ->
                                         changeFront = 
                                             (List.dropFirst regItem.current 1)
                                             |> List.prepend { pat & serie : ZeroOrMore }
-                                            
+                                        
                                         List.concat chain changeFront
-                                        |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )
+                                        |> (\ updatedCurrent ->  
+                                                List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
                                         |> ( \ updatedState ->
                                             List.concat chain (List.dropFirst regItem.current 1)
-                                            |> (\ updatedCurrent ->  List.append updatedState {regItem & current : updatedCurrent} ))
+                                            |> (\ updatedCurrent ->  
+                                                    List.concat updatedState (updateRegexItemInternal [] {regItem & current : updatedCurrent}) ))
                                     ZeroOrMore ->
  
-                                        List.append state
+                                        List.concat state
                                             (List.concat chain  regItem.current
-                                            |> (\ updatedCurrent ->  {regItem & current : updatedCurrent, meta : Active} ))
-                                        |> List.concat  ( checkIfNextCapture {regItem & current : (List.dropFirst regItem.current 1)} )
+                                            |> (\ updatedCurrent -> ( updateRegexItemInternal [] {regItem & current : updatedCurrent, meta : Active} )))
+                                        |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                     
                                     NTimes cnt -> 
                                         
                                         List.concat (concatIter cnt chain  [] ) (List.dropFirst regItem.current 1)
-                                        |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
+                                        |> (\ updatedCurrent -> 
+                                                 List.concat state ( updateRegexItemInternal [] {regItem & current : updatedCurrent} ) )  
                                     Once ->
                                         List.concat chain (List.dropFirst regItem.current 1)
-                                        |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
+                                        |> (\ updatedCurrent ->  
+                                            List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent}) )  
                             _ -> 
                                 when pat.serie is 
-                                    AtLeastOne ->           
+                                    AtLeastOne ->    
+                                        dbg  "AtLeastOne"       
                                         changeFront = 
                                             (List.dropFirst regItem.current 1)
                                             |> List.prepend { pat & serie : ZeroOrMore }
@@ -344,18 +336,20 @@ checkMatching = \ utfLst, reg  ->
                                             List.concat [{pat & serie : Once}] (List.dropFirst regItem.current 1)
                                             |> (\ updatedCurrent ->  List.append updatedState {regItem & current : updatedCurrent} ))
                                     ZeroOrMore ->
-    
+                                        dbg  "ZeroOrMore"
                                         List.append state
                                             (List.concat [{pat & serie : Once}]  regItem.current 
                                             |> (\ updatedCurrent ->  {regItem & current : updatedCurrent, meta : Active} ))
                                     
-                                        |> List.concat  ( checkIfNextCapture {regItem & current : (List.dropFirst regItem.current 1)} )
+                                        |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                     
                                     
                                     NTimes cnt -> 
+                                        dbg  "NTimes"
                                         List.concat (concatIter cnt [{pat & serie : Once}]  [] ) (List.dropFirst regItem.current 1)
                                         |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
                                     Once ->
+                                        dbg  "once"
                                         List.append state regItem 
                     Err _ -> List.append state regItem )
      
@@ -394,7 +388,8 @@ checkMatching = \ utfLst, reg  ->
         List.walk utfLst [createParsingRecord reg Origin]  ( \ outState, utf ->
             
             updatedStates = updateRegex outState 
-
+            dbg  "candidates:"
+            dbg  List.len updatedStates
             List.walk updatedStates [] ( \ state, processedReg ->   
 
                 if processedReg.result == Bool.true then
@@ -411,7 +406,6 @@ checkMatching = \ utfLst, reg  ->
                                     current = List.dropFirst  updatedState.current  1
                                     #   BUG  this  crashes 
                                     #ppp = List.isEmpty current == Bool.true 
-                                    
                                     updatedCapture =
                                         if matchThis.pattern.capture == Bool.true then
                                             changeValue updatedState.captured 0 utf  
@@ -521,21 +515,29 @@ stagesCreationRegex  = \ _param ->
     when stage1 is 
         Ok stage1Pat ->
             patternAux1Result = regexCreationStage2 aux1Patt stage1Pat  []
-            zzz = when patternAux1Result is 
+            when patternAux1Result is 
                 Ok patternAux1 ->
-                    stage2Pat = List.append stage1Pat  { tag : Only, tokens : patternAux1 }
-                    dbg  "aux BACK  SLASH \n\n"
-                    patternAuxBackSlashResult = regexCreationStage2 auxBackSlash stage2Pat  []
-                    
-                    when patternAuxBackSlashResult is 
-                        Ok patternAuxBackSlash ->
-                            
-                            dbg printMe patternAuxBackSlash
-                            Ok patternAuxBackSlash
-                        Err message -> Err message
-                Err message -> Err message   
                 
-            Ok stage1Pat
+                    dbg  " check aux  "
+                    dbg  printMe   patternAux1
+                    stage2Pat = List.append stage1Pat  { tag : Only, tokens : patternAux1 }
+                    
+                    List.walkUntil  secondStagePatterns (Ok stage1Pat) ( \ state, pat  ->
+                        when state is 
+                            Ok currentPatterns ->
+                                patternResult = regexCreationStage2 pat.str stage2Pat  []
+                        
+                                when patternResult is 
+                                    Ok pattern ->
+                                        dbg "stage 2 pattern  \n\n"
+                                        dbg printMe pattern
+                                        Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
+                                    Err message -> Break (Err message)
+                            Err message -> Break (Err message)
+                    )
+                    
+                Err message -> Err message   
+
         Err message -> Err message
 
 
@@ -929,6 +931,8 @@ main =
     pattern = "aaaa"
     # pp =  parseStr  "sss"   "a"
     
+    # dbg  availableRegex
+    
     testModify = ( \ tree,fun, value  -> 
         fun tree  0 value )
             
@@ -947,14 +951,29 @@ main =
         |> testModify  changeValue  100
         |> testModify  composeMatchedStructure   CaptureClose
         |> testModify  composeMatchedStructure   CaptureClose
-    dbg  res
-    dbg createOnlyOutOfTree res 
+    #dbg  res
+    #dbg createOnlyOutOfTree res 
     
-    #pat  = [(createToken  ( Character '[' )  Once Bool.false ),createToken  CaptureOpen  AtLeastOne Bool.false ,createToken  (Sequence  [createToken  ( Character 'q' )  Once Bool.false,createToken  Dot  AtLeastOne Bool.false] ) AtLeastOne Bool.false ,createToken  CaptureClose  AtLeastOne Bool.false, createToken  ( Character ']' )  AtLeastOne Bool.false ]
-    #dbg  printMe  pat 
-    #result  = checkMatching (Str.toUtf8  "fdgfdsghf]dhgfdhgf[qagfdbvgfd]" )   pat
+    
+    chainOut = 
+        []
+        |> List.append  (createToken  CaptureOpen  Once Bool.false )
+        |> List.append  (createToken (Sequence  [createToken  Dot  AtLeastOne Bool.true])  Once Bool.false)
+        |> List.append  (createToken  CaptureClose  Once Bool.false)
+            
+    pat  =
+        []
+        |> List.append  (createToken  ( Character '[' )  Once Bool.false )
+        |> List.append  (createToken  CaptureOpen  Once Bool.false)
+        |> List.append  (createToken (Sequence  chainOut)  Once Bool.false) 
+        |> List.append  (createToken  CaptureClose  Once Bool.false)
+        |> List.append  (createToken  ( Character ']' )  Once Bool.false)
+        
+    dbg  printMe  pat 
+    result  = checkMatching (Str.toUtf8  "[ab]" )   pat
     #dbg  result.matched
-    #dbg  result.result
+    dbg  result.result
+    dbg  result.captured
     # BUG  as usuall problem with dbg     
     #dbg  pp 
     
