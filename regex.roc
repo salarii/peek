@@ -33,7 +33,7 @@ firstStagePatterns = [
         
 # second  stage  patterns
 # temporary Only
-aux1Patt =  "[((a+))+]"
+aux1Patt =  "[((.+))]"
 
 secondStagePatterns =  [
     { tag : BackSlash, str : "\\[.?{}^*]" } ] # " 
@@ -361,10 +361,26 @@ checkMatching = \ utfLst, reg  ->
                                     
                                         |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                     
-                                    MNTimes m n -> 
-                                        state
+                                    MNTimes m n ->
+                                            changeFront = 
+                                                (List.dropFirst regItem.current 1)
+                                                |> List.prepend { pat & serie : NoMorethan n }
+                                                
+                                            List.concat (concatIter m [{pat & serie : Once}]  [] ) changeFront
+                                            |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )
                                     NoMorethan cnt ->
-                                        state
+                                        if  cnt == 0 then
+                                           List.concat state ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} ) 
+                                        else 
+                                            changeFront = 
+                                                (List.dropFirst regItem.current 1)
+                                                |> List.prepend { pat & serie : NoMorethan (cnt - 1) }
+                                                
+                                            List.concat [{pat & serie : Once}] changeFront
+                                            |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
+                                            |> ( \ updatedState ->
+                                                List.concat [{pat & serie : Once}] (List.dropFirst regItem.current 1)
+                                                |> (\ updatedCurrent ->  List.append updatedState {regItem & current : updatedCurrent} ))
                                     NTimes cnt -> 
                                         List.concat (concatIter cnt [{pat & serie : Once}]  [] ) (List.dropFirst regItem.current 1)
                                         |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
@@ -466,14 +482,6 @@ getRegexTokens = \ result  ->
                 Ok  matched  -> 
                     Ok [(createToken  ( Character matched )  Once Bool.false )]
                 Err  _  -> Err "character  tag problem"
-#        Dot->
-#            Ok [(createToken  Dot  Once Bool.false )]      
-#        AtLeastOne -> 
-#            Ok [(createToken  AtLeastOne  Once Bool.false )]
-#        CaptureOpen ->
-#            Ok [(createToken  CaptureOpen  Once Bool.false )]
-#        CaptureClose ->
-#            Ok [(createToken  CaptureClose  Once Bool.false )]
         _ -> 
             Err "wrong tag"
 
@@ -547,6 +555,7 @@ stagesCreationRegex  = \ _param ->
                                 when patternResult is 
                                     Ok pattern ->
                                         dbg "stage 2 pattern  \n\n"
+                                        dbg List.len pattern
                                         dbg printMe pattern
                                         Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
                                     Err message -> Break (Err message)
@@ -604,7 +613,51 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                         List.append chainLst token
                                         
                             )
-                                            
+                            # those two functions below exist because of some failures in design
+                            createUpdatedToken = ( \ token, cnt, op,  tokens ->
+                                        when token is
+                                            Ok elem ->
+                                                when elem.token is
+                                                    Sequence chain ->
+                                                        createUpdatedToken  (List.last chain)  cnt op (List.append tokens elem)      
+                                                    _ ->
+                                                        List.append tokens elem
+                                                        |> List.dropLast cnt
+                                                        |> List.walkBackwards  (Err "internal error during  + evaluation ") (  \ createResult , elemToken   -> 
+                                                            when elemToken.token is
+                                                                Sequence chain ->
+                                                                    when chain is 
+                                                                        [.., elemChain ] ->
+                                                                            when createResult is 
+                                                                                Ok updatedToken ->
+                                                                                    Ok (createToken (Sequence (modifyLastInList chain updatedToken)) elemToken.serie elemToken.capture )
+                                                                                _ ->
+                                                                                    Ok ( op elemToken )
+                                                                        [] -> Err " wrong + usage "
+                                                                _->
+                                                                    Ok ( op elemToken ))
+                                               
+                                            Err  _ ->  Err " wrong + usage "
+                                    )
+                                    
+                            omitCaptureEnd = ( \ inLst, op, cnt -> 
+                                        when List.last inLst is
+                                            Ok elem ->
+                                                when elem.token is 
+                                                    CaptureClose ->
+                                                        when omitCaptureEnd ( List.dropLast inLst  1) op (cnt +1) is 
+                                                            Ok updatedLst ->
+                                                                Ok (
+                                                                    List.append updatedLst elem)
+                                                            Err message -> Err message 
+                                                    _ ->
+                                                        when  createUpdatedToken (Ok elem)  cnt op [] is
+                                                            Ok updatedLast ->  Ok ( modifyLastInList inLst updatedLast )
+                                                            Err  message -> Err  message  
+                                                        
+                                                
+                                            Err _ -> Err "Wrong usage of + in pattern"        
+                                        )           
                             when  result.tag is 
                                 Character ->
                                     when List.first result.parsedResult.matched is 
@@ -640,62 +693,21 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
                                 Only -> 
-                                    dbg "only\n\n"
-                                    dbg result.parsedResult.captured  
-                                    Ok state
-                                BackSlash-> 
-                                    Ok state
+                                    when createOnlyOutOfTree result.parsedResult.captured is
+                                        Ok onlyToken -> 
+                                            Ok { state &  lst : modifLastInChain state.lst onlyToken }
+                                        Err message ->
+                                            Err message   
+                                BackSlash->
+                                    when result.parsedResult.matched is 
+                                        [backslash, sign ] ->
+                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character sign) Once state.capture) }
+                                        _ -> Err "back slash parser  match problem"
+                                    
                                 AtLeastOne ->
                                     
-                                    # this exist because of some failures in design
-                                    createUpdatedToken = ( \ token, cnt, op,  tokens ->
-                                        when token is
-                                            Ok elem ->
-                                                when elem.token is
-                                                    Sequence chain ->
-                                                        createUpdatedToken  (List.last chain)  cnt op (List.append tokens elem)      
-                                                    _ ->
-                                                        List.append tokens elem
-                                                        |> List.dropLast cnt
-                                                        |> List.walkBackwards  (Err "internal error during  + evaluation ") (  \ createResult , elemToken   -> 
-                                                            when elemToken.token is
-                                                                Sequence chain ->
-                                                                    when chain is 
-                                                                        [.., elemChain ] ->
-                                                                            when createResult is 
-                                                                                Ok updatedToken ->
-                                                                                    Ok (createToken (Sequence (modifyLastInList chain updatedToken)) elemToken.serie elemToken.capture )
-                                                                                _ ->
-                                                                                    Ok ( op elemToken )
-                                                                        [] -> Err " wrong + usage "
-                                                                _->
-                                                                    Ok ( op elemToken ))
-                                               
-                                            Err  _ ->  Err " wrong + usage "
-                                    )
-                                    
-                                    
-                                    
-                                    omitCaptureEnd = ( \ inLst, cnt -> 
-                                        when List.last inLst is
-                                            Ok elem ->
-                                                when elem.token is 
-                                                    CaptureClose ->
-                                                        when omitCaptureEnd ( List.dropLast inLst  1) (cnt +1) is 
-                                                            Ok updatedLst ->
-                                                                Ok (
-                                                                    List.append updatedLst elem
-                                                                    |> List.append elem )
-                                                            Err message -> Err message 
-                                                    _ ->
-                                                        when  createUpdatedToken (Ok elem)  cnt ( \ inElem -> {inElem & serie : AtLeastOne } ) [] is
-                                                            Ok updatedLast ->  Ok ( modifyLastInList inLst updatedLast )
-                                                            Err  message -> Err  message  
-                                                        
-                                                
-                                            Err _ -> Err "Wrong usage of + in pattern"        
-                                        ) 
-                                    when omitCaptureEnd state.lst 0 is 
+
+                                    when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : AtLeastOne } )  0 is 
                                         Ok newLst ->
                                             Ok { state &  lst : newLst }
                                         Err message -> Err message  
@@ -717,7 +729,6 @@ regexCreationStage2  = \ str, patterns, currReg ->
 # dbg does not always  works so I  am using this : ) 
 printMe = (  \ arrayPrt ->
     List.walk arrayPrt "" (  \ inState , token ->
-        dbg token.serie
         when  token.token  is 
             Character  val -> 
                 extractedChar = 
@@ -740,6 +751,10 @@ printMe = (  \ arrayPrt ->
                 |> Str.concat "\nexit sequence  <- "
             AtLeastOne ->
                 Str.concat inState "\nAt least one"
+            Once -> Str.concat inState "\nOnce"
+            BackSlash -> Str.concat inState "\nBackSlash"
+            CharacterSet _ -> Str.concat inState "\nCharacter set"  
+            LimitRanges _ -> Str.concat inState "\nLimit Ranges set"
             _ -> 
                 "\n unknown token "
         )
@@ -1040,7 +1055,7 @@ main =
     pattern = "aaaa"
     # pp =  parseStr  "sss"   "a"
     
-    dbg  availableRegex
+    avil  =availableRegex
     
     testModify = ( \ tree,fun, value  -> 
         fun tree  0 value )
