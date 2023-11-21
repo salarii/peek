@@ -23,6 +23,8 @@ firstStagePatterns = [
         { tag : CaptureOpen, str : "("},
         { tag : CaptureClose, str : ")"},
         { tag : AtLeastOne, str : "+" },
+        { tag : ZeroOrMore, str : "*" },
+        { tag : Optional, str : "?" },
         { tag : Separator, str : "|" },
         { tag : Digit, str : "\\d" },
         { tag : NoDigit, str : "\\D" },
@@ -38,7 +40,9 @@ aux1Patt =  "[((.+))]"
 secondStagePatterns =  [
     { tag : BackSlash, str : "\\[.?{}^*]" },  # " 
     { tag : Repetition, str : "{(\\d)}"},   #"   
-    { tag : RangeRepetition, str : "{(\\d),(\\d)}" } ]  # "
+    { tag : RangeRepetition, str : "{(\\d),(\\d)}" }, # "
+    { tag : Only, str : "[(((.)-(.))|((.+))|(\\[.?{}^*]))+]" }, # "
+    { tag : Except, str : "[(((.)-(.))|((.+))|(\\[.?{}^*]))+]" }]  # "
         
 #auxiliaryPatterns = 
 #    [ tag : CharacterSet, str : ".-."  ]
@@ -90,7 +94,27 @@ treeBase =
     |> addElement  0 emptyNode
     
 createParsingRecord = \ regex, meta ->
-     { regex : regex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : No } 
+    # workaround: I haven't predicted that this information will be needed.
+    # on earlier stages it would be cleaner (maybe)to extract this but not with this design
+    # I just missed that opportunity and now I don't want to rip through entire thing to make it right
+    stricSetting = 
+        when (List.first regex, List.last regex ) is
+            (Ok  (  tokenFirst) , Ok (  tokenLast) ) ->
+                when ( tokenFirst.token, tokenLast.token )  is 
+                    (Character  first,Character  last )  ->
+                        { updatedRegex : 
+                            List.dropFirst regex 1
+                            |> List.dropLast 1,
+                            strict : Both }
+                    (Character  first, _) ->
+                        { updatedRegex : List.dropFirst regex 1, strict : Front }
+                    (_, Character  last) ->
+                        { updatedRegex : List.dropLast regex 1, strict : Back }
+                    _ -> 
+                        { updatedRegex : regex, strict : No }
+            _ ->  { updatedRegex : regex, strict : No }
+
+    { regex : stricSetting.updatedRegex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : stricSetting.strict } 
 
 
 checkMatchingValidity = \ matchingResult ->
@@ -237,11 +261,11 @@ checkMatching = \ utfLst, reg  ->
                     Within -> NoMatch
                     Outside -> Consume
             Except  tokens  ->
-                p = List.walkUntil tokens Consume ( \  state , token  ->
-                    when matchStr  utf  token is
-                        Consume -> Break  NoMatch
-                        NoMatch -> Continue state 
-                    ) 
+                #List.walkUntil tokens Consume ( \  state , token  ->
+                #    when matchStr  utf  token is
+                #        Consume -> Break  NoMatch
+                #        NoMatch -> Continue state 
+                #    ) 
                     
                 Consume
             Character val ->
@@ -684,7 +708,9 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                         Ok onlyToken -> 
                                             Ok { state &  lst : modifLastInChain state.lst onlyToken }
                                         Err message ->
-                                            Err message   
+                                            Err message
+                                Except -> 
+                                    Ok state
                                 BackSlash->
                                     when result.parsedResult.matched is 
                                         [backslash, sign ] ->
@@ -709,6 +735,16 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                                 Err message -> Err message                                              
                                         Err message ->
                                             Err message 
+                                ZeroOrMore ->                                            
+                                    when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : ZeroOrMore } )  0 is 
+                                        Ok newLst ->
+                                            Ok { state &  lst : newLst }
+                                        Err message -> Err message  
+                                Optional ->
+                                     when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : (NoMorethan 1) } )  0 is 
+                                        Ok newLst ->
+                                            Ok { state &  lst : newLst }
+                                        Err message -> Err message  
                                 AtLeastOne ->
                                     
 
@@ -1062,6 +1098,7 @@ parseStr = \ str, pattern ->
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
+                    
                     # for now get longest maybe??
                     
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive)  ( \ state, regexParser ->  
