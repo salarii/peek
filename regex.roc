@@ -100,20 +100,6 @@ checkMatchingValidity = \ matchingResult ->
         Back -> List.isEmpty  matchingResult.left 
         Both -> (List.isEmpty  matchingResult.missed) && (List.isEmpty  matchingResult.left)
 
-walkUntil : 
-    List elem, 
-    state,     
-    (state, 
-    elem
-    -> 
-        [
-            Continue state,
-            Break state
-        ])
-    -> state
-
-
-
 modifyLastInList = \ lst, elem ->
     List.dropLast lst 1
     |> List.append elem
@@ -251,11 +237,13 @@ checkMatching = \ utfLst, reg  ->
                     Within -> NoMatch
                     Outside -> Consume
             Except  tokens  ->
-                walkUntil tokens Consume ( \  state , token  ->
+                p = List.walkUntil tokens Consume ( \  state , token  ->
                     when matchStr  utf  token is
                         Consume -> Break  NoMatch
                         NoMatch -> Continue state 
                     ) 
+                    
+                Consume
             Character val ->
                 if val == utf then
                     Consume    
