@@ -10,7 +10,7 @@
 # I plan to add other means, to enable peek user to be relatively effective time wise anyway 
 
 # I was not interested to recreate regex with all it potential and pitfalls 
-# what I want is to make it work for 99% cases user will require
+# what I want is to make it work for 99% use cases( real life scenarios )
 
 
 # side note:
@@ -36,9 +36,9 @@ firstStagePatterns = [
 aux1Patt =  "[((.+))]"
 
 secondStagePatterns =  [
-    { tag : BackSlash, str : "\\[.?{}^*]" } ] # " 
-    #{ tag : Repetition, str : "{(\\d)}"},   #"   
-    #{ tag : RangeRepetition, str : "{(\\d),(\\d)}" } ]  # "
+    { tag : BackSlash, str : "\\[.?{}^*]" },  # " 
+    { tag : Repetition, str : "{(\\d)}"},   #"   
+    { tag : RangeRepetition, str : "{(\\d),(\\d)}" } ]  # "
         
 #auxiliaryPatterns = 
 #    [ tag : CharacterSet, str : ".-."  ]
@@ -205,8 +205,6 @@ evalRegex = \ utfLst, patterns, regex ->
  
         List.walk patterns [] ( \ state, pattern ->
             out = checkMatching utfLst pattern.tokens
-            dbg (out.result == Bool.true  && List.isEmpty out.missed)
-            dbg  pattern.tag  
             if out.result == Bool.true  && List.isEmpty out.missed then
                 List.append state { tag : pattern.tag, parsedResult : out } 
             else
@@ -252,6 +250,12 @@ checkMatching = \ utfLst, reg  ->
                 when checkRange utf [{ left : 48, right : 57 }] is 
                     Within -> NoMatch
                     Outside -> Consume
+            Except  tokens  ->
+                walkUntil tokens Consume ( \  state , token  ->
+                    when matchStr  utf  token is
+                        Consume -> Break  NoMatch
+                        NoMatch -> Continue state 
+                    ) 
             Character val ->
                 if val == utf then
                     Consume    
@@ -542,8 +546,6 @@ stagesCreationRegex  = \ _param ->
             patternAux1Result = regexCreationStage2 aux1Patt stage1Pat  []
             when patternAux1Result is 
                 Ok patternAux1 ->
-                    dbg  " check aux  "
-                    dbg  printMe   patternAux1
                     stage2Pat = List.append stage1Pat  { tag : Only, tokens : patternAux1 }
 
                     List.walkUntil  secondStagePatterns (Ok stage1Pat) ( \ state, pat  ->
@@ -554,9 +556,6 @@ stagesCreationRegex  = \ _param ->
 
                                 when patternResult is 
                                     Ok pattern ->
-                                        dbg "stage 2 pattern  \n\n"
-                                        dbg List.len pattern
-                                        dbg printMe pattern
                                         Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
                                     Err message -> Break (Err message)
                             Err message -> Break (Err message)
@@ -704,6 +703,24 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                             Ok { state &  lst : modifLastInChain state.lst  (createToken (Character sign) Once state.capture) }
                                         _ -> Err "back slash parser  match problem"
                                     
+                                Repetition ->
+                                    when createRepetitionOutOfTree result.parsedResult.captured is
+                                        Ok serie -> 
+                                            when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
+                                                Ok newLst ->
+                                                    Ok { state &  lst : newLst }
+                                                Err message -> Err message     
+                                        Err message ->
+                                            Err message  
+                                RangeRepetition ->
+                                    when createRepetitionOutOfTree result.parsedResult.captured is
+                                        Ok serie -> 
+                                            when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
+                                                Ok newLst ->
+                                                    Ok { state &  lst : newLst }
+                                                Err message -> Err message                                              
+                                        Err message ->
+                                            Err message 
                                 AtLeastOne ->
                                     
 
@@ -850,14 +867,8 @@ changeValue = \ tree, id, value->
         _ -> tree
          
 
-         
-#  createToken (CharacterSet ( LimitRanges [{ { left : 'A', right : 'Z' },
-#                (createToken (CharacterSet val) Once Bool.false )))
-createOnlyOutOfTree =  \ tree ->
-    errMess = "Only token problem:  "
-    when Dict.get tree.content 0  is 
-        Ok head ->
-            codexResult = List.walk head.children (Ok { characterSet : [], limitRanges : [] }) ( \ state, childId ->
+seekInTreeOnlyExcept = ( \ head, tree, errMess -> 
+            List.walk head.children (Ok { characterSet : [], limitRanges : [] }) ( \ state, childId ->
                 when state is 
                     Ok items ->
                             
@@ -898,28 +909,60 @@ createOnlyOutOfTree =  \ tree ->
                             Err _ -> Err (Str.concat errMess "wrong second level child structure" )
                                 
                     Err  message -> Err  message  
-    
-                )
-            when  codexResult is 
-                Ok codex  ->
-                    if List.isEmpty codex.characterSet == Bool.false &&
-                        List.isEmpty codex.limitRanges == Bool.false then
+                ))
+
+createExceptOutOfTree =  \ tree ->
+    errMess = "Except token problem:  "
+    when Dict.get tree.content 0  is 
+        Ok head ->
+            searchResult = seekInTreeOnlyExcept head tree errMess
+            when  searchResult is 
+                Ok search  ->
+                    if List.isEmpty search.characterSet == Bool.false &&
+                        List.isEmpty search.limitRanges == Bool.false then
+                        chain =
+                            []
+                            |> List.append (CharacterSet search.characterSet)
+                            |> List.append (LimitRanges search.limitRanges)
+                            
+                        Ok (createToken (Except  chain) Once Bool.false )
+        
+                    else if List.isEmpty search.characterSet == Bool.false then 
+                        Ok (createToken (Except [CharacterSet search.characterSet]) Once Bool.false ) 
+                    else if List.isEmpty search.limitRanges == Bool.false then
+                        Ok (createToken (Except [LimitRanges search.limitRanges]) Once Bool.false )
+                    else 
+                        Err (Str.concat errMess "empty tree") 
+                    
+                Err message -> Err message
+        Err _ -> Err  (Str.concat errMess "not right format of tree")
+
+
+createOnlyOutOfTree =  \ tree ->
+    errMess = "Only token problem:  "
+    when Dict.get tree.content 0  is 
+        Ok head ->
+            searchResult = seekInTreeOnlyExcept head tree errMess
+            when  searchResult is 
+                Ok search  ->
+                    if List.isEmpty search.characterSet == Bool.false &&
+                        List.isEmpty search.limitRanges == Bool.false then
                         chain =
                             []
                             |> List.append (createToken CaptureOpen Once Bool.false )
-                            |> List.append (createToken (CharacterSet codex.characterSet) Once Bool.false )
+                            |> List.append (createToken (CharacterSet search.characterSet) Once Bool.false )
                             |> List.append (createToken CaptureClose Once Bool.false )
                             |> List.append (createToken Separator Once Bool.false )
                             |> List.append (createToken CaptureOpen Once Bool.false )
-                            |> List.append (createToken (LimitRanges codex.limitRanges) Once Bool.false )
+                            |> List.append (createToken (LimitRanges search.limitRanges) Once Bool.false )
                             |> List.append (createToken CaptureClose Once Bool.false )
                             
                         Ok (createToken (Sequence  chain) Once Bool.false )
         
-                    else if List.isEmpty codex.characterSet == Bool.false then 
-                        Ok (createToken (CharacterSet codex.characterSet) Once Bool.false ) 
-                    else if List.isEmpty codex.limitRanges == Bool.false then
-                        Ok (createToken (LimitRanges codex.limitRanges) Once Bool.false )
+                    else if List.isEmpty search.characterSet == Bool.false then 
+                        Ok (createToken (CharacterSet search.characterSet) Once Bool.false ) 
+                    else if List.isEmpty search.limitRanges == Bool.false then
+                        Ok (createToken (LimitRanges search.limitRanges) Once Bool.false )
                     else 
                         Err (Str.concat errMess "empty tree") 
                     
@@ -932,20 +975,23 @@ createRepetitionOutOfTree =  \ tree ->
     errMess = "Repetition token problem:  "
     when Dict.get tree.content 0  is 
         Ok head ->
-            codexResult = List.walkUntil head.children (Ok []) ( \ stateResult, childId ->
+            searchResult = List.walkUntil head.children (Ok []) ( \ stateResult, childId ->
                 when  stateResult  is 
                     Ok state ->
                         when  (getValue [0] childId tree) is 
-                            Ok val -> 
-                                Continue (Ok  (List.append state  val) )
+                            Ok valLst ->
+                                when valLst is 
+                                    [ val ] ->  
+                                        Continue (Ok  (List.append state  val) )
+                                    _ -> Break ( Err (Str.concat errMess "wrong child structure" )) 
                             Err _ -> 
                                 Break (Err (Str.concat errMess "wrong child structure, missing value" ))
                     Err message -> Break (Err message)
                 )
                 
-            when codexResult is 
-                Ok codex ->
-                    when codex is  
+            when searchResult is 
+                Ok search ->
+                    when search is  
                         [val] ->
                             Ok ( NTimes val )
                                         
@@ -958,11 +1004,7 @@ createRepetitionOutOfTree =  \ tree ->
                 
                 Err message  -> Err message  
         Err  _  ->  Err  ( Str.concat errMess " no values " )
-                        
-    #{ tag : Repetition, str : "{(\\d)}"},   #"   
-    #{ tag : RangeRepetition, str : "{(\\d),(\\d)}" } ]  # "
-                    
-                    
+
                     
 composeMatchedStructure = \ tree, id,tag ->
     
@@ -988,7 +1030,7 @@ composeMatchedStructure = \ tree, id,tag ->
         Err _  -> tree
          
     
-    
+# tree used is  awkward consider  using  something along those  lines  in the future
 #modifyActive = \ op, currentStructHead  ->
 #    Node  head = currentStructHead
 #    dbg  head
@@ -1054,9 +1096,9 @@ parseStr = \ str, pattern ->
 main =
     pattern = "aaaa"
     # pp =  parseStr  "sss"   "a"
-    
+
     avil  =availableRegex
-    
+
     testModify = ( \ tree,fun, value  -> 
         fun tree  0 value )
             
@@ -1075,10 +1117,7 @@ main =
         |> testModify  changeValue  100
         |> testModify  composeMatchedStructure   CaptureClose
         |> testModify  composeMatchedStructure   CaptureClose
-    #dbg  res
-    #dbg createOnlyOutOfTree res 
-    
-    
+
     chainOut = 
         []
         |> List.append  (createToken  CaptureOpen  Once Bool.false )
@@ -1093,13 +1132,6 @@ main =
         |> List.append  (createToken  CaptureClose  Once Bool.false)
         |> List.append  (createToken  ( Character ']' )  Once Bool.false)
         
-    #dbg  printMe  pat 
-    result  = checkMatching (Str.toUtf8  "[.?{}^*]" )   pat
-    #dbg  result.matched
-    dbg  result.result
-    dbg  result.captured
-    # BUG  as usuall problem with dbg     
-    #dbg  pp 
     
                 
     Stdout.line "outStr"
