@@ -35,31 +35,16 @@ firstStagePatterns = [
         
 # second  stage  patterns
 # temporary Only
-aux1Patt =  "[((.+))]"
+aux1Patt =  "T(((.+)))T"
+
 
 secondStagePatterns =  [
-    { tag : BackSlash, str : "\\[.?{}^*]" },  # " 
+    { tag : BackSlash, str : "\\T.?{}^*T" },  # " 
     { tag : Repetition, str : "{(\\d)}"},   #"   
     { tag : RangeRepetition, str : "{(\\d),(\\d)}" }, # "
-    { tag : Only, str : "[(((.)-(.))|((.+))|(\\[.?{}^*]))+]" }, # "
-    { tag : Except, str : "[(((.)-(.))|((.+))|(\\[.?{}^*]))+]" }]  # "
+    { tag : Only, str : "[(((.)-(.))|((.+))|((\\T.?{}^*T)))+]" }, # "
+    { tag : Except, str : "[^(((.)-(.))|((.+))|((\\T.?{}^*T)))+]" }]  # "
         
-#auxiliaryPatterns = 
-#    [ tag : CharacterSet, str : ".-."  ]
-#    |> List.concat regexSeedPattern
-     
-     
-#secondStagePatterns = [
-#    tag : Only,  str : "[.+]"
-#    tag : NotThis, str : "[^.+]"
-#]     
-        
-#thirdStagePatterns = [
-#    { tag : BackSlash, str : "\([.?{}^\*])" },
-#    { tag : Repetition, str : "{(\d)}" },
-#    { tag : RangeRepetition, str : "{(\d),(\d)}" }    
-#]   
-
 
 priorities =
     Dict.empty {}
@@ -102,18 +87,29 @@ createParsingRecord = \ regex, meta ->
             (Ok  (  tokenFirst) , Ok (  tokenLast) ) ->
                 when ( tokenFirst.token, tokenLast.token )  is 
                     (Character  first,Character  last )  ->
-                        { updatedRegex : 
-                            List.dropFirst regex 1
-                            |> List.dropLast 1,
-                            strict : Both }
+                        if first == '^' && last == '$' then
+                            { updatedRegex : 
+                                List.dropFirst regex 1
+                                |> List.dropLast 1,
+                                strict : Both }
+                        else
+                            { updatedRegex : regex, strict : No }          
                     (Character  first, _) ->
-                        { updatedRegex : List.dropFirst regex 1, strict : Front }
+                        if first == '^'  then
+                            { updatedRegex : List.dropFirst regex 1, strict : Front }
+                        else
+                            { updatedRegex : regex, strict : No }    
+                        
                     (_, Character  last) ->
-                        { updatedRegex : List.dropLast regex 1, strict : Back }
+                        if last == '$'  then
+                            { updatedRegex : List.dropLast regex 1, strict : Back }
+                        else
+                            { updatedRegex : regex, strict : No }    
+                        
                     _ -> 
                         { updatedRegex : regex, strict : No }
             _ ->  { updatedRegex : regex, strict : No }
-
+    
     { regex : stricSetting.updatedRegex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : stricSetting.strict } 
 
 
@@ -563,9 +559,10 @@ stagesCreationRegex  = \ _param ->
                     List.walkUntil  secondStagePatterns (Ok stage1Pat) ( \ state, pat  ->
                         when state is 
                             Ok currentPatterns ->
+                                dbg  pat.str
                                 patternResult = regexCreationStage2 pat.str stage2Pat  []
 
-
+                                
                                 when patternResult is 
                                     Ok pattern ->
                                         Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
@@ -668,7 +665,9 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                                         
                                                 
                                             Err _ -> Err "Wrong usage of + in pattern"        
-                                        )           
+                                        )
+                            dbg result.tag     
+                            dbg  printMe  state.lst
                             when  result.tag is 
                                 Character ->
                                     when List.first result.parsedResult.matched is 
@@ -704,12 +703,14 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
                                 Only -> 
+                                    dbg  result.parsedResult.captured
                                     when createOnlyOutOfTree result.parsedResult.captured is
                                         Ok onlyToken -> 
                                             Ok { state &  lst : modifLastInChain state.lst onlyToken }
                                         Err message ->
                                             Err message
                                 Except -> 
+                                    dbg  result.parsedResult.captured
                                     Ok state
                                 BackSlash->
                                     when result.parsedResult.matched is 
@@ -718,6 +719,7 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                         _ -> Err "back slash parser  match problem"
                                     
                                 Repetition ->
+                                    dbg result.parsedResult.captured
                                     when createRepetitionOutOfTree result.parsedResult.captured is
                                         Ok serie -> 
                                             when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
@@ -727,6 +729,7 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                         Err message ->
                                             Err message  
                                 RangeRepetition ->
+                                    dbg result.parsedResult.captured
                                     when createRepetitionOutOfTree result.parsedResult.captured is
                                         Ok serie -> 
                                             when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
@@ -786,6 +789,8 @@ printMe = (  \ arrayPrt ->
                 Str.concat inState "\nCapture  Open"
             CaptureClose ->
                 Str.concat inState "\nCapture  Close"
+            Separator ->
+                Str.concat inState "\nSeparator"
             Sequence  array  ->    
                 Str.concat inState "\nseq : -> " 
                 |> Str.concat (printMe array)
@@ -793,6 +798,7 @@ printMe = (  \ arrayPrt ->
             AtLeastOne ->
                 Str.concat inState "\nAt least one"
             Once -> Str.concat inState "\nOnce"
+            Digit -> Str.concat inState "\nDigit"
             BackSlash -> Str.concat inState "\nBackSlash"
             CharacterSet _ -> Str.concat inState "\nCharacter set"  
             LimitRanges _ -> Str.concat inState "\nLimit Ranges set"
@@ -937,7 +943,7 @@ seekInTreeOnlyExcept = ( \ head, tree, errMess ->
 
 createExceptOutOfTree =  \ tree ->
     errMess = "Except token problem:  "
-    when Dict.get tree.content 0  is 
+    when Dict.get tree.content 1  is 
         Ok head ->
             searchResult = seekInTreeOnlyExcept head tree errMess
             when  searchResult is 
@@ -964,7 +970,7 @@ createExceptOutOfTree =  \ tree ->
 
 createOnlyOutOfTree =  \ tree ->
     errMess = "Only token problem:  "
-    when Dict.get tree.content 0  is 
+    when Dict.get tree.content 1  is 
         Ok head ->
             searchResult = seekInTreeOnlyExcept head tree errMess
             when  searchResult is 
@@ -1123,6 +1129,19 @@ main =
     # pp =  parseStr  "sss"   "a"
 
     avil  =availableRegex
+
+    zzz =
+        when  avil  is 
+            Ok  ddd ->  
+                z = 
+                    List.walk ddd  0 ( \ state, item -> 
+                        #dbg printMe  item.tokens
+                        state
+                    )
+                 
+                "dddddd"
+            
+            Err _  -> "aaaa"
 
     testModify = ( \ tree,fun, value  -> 
         fun tree  0 value )
