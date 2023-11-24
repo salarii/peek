@@ -57,6 +57,7 @@ priorities =
     |> Dict.insert Separator 1
     |> Dict.insert Digit 1
     |> Dict.insert NoDigit 1
+    |> Dict.insert Optional 1
     |> Dict.insert Alphanumeric 1
     |> Dict.insert NoAlphanumeric 1
     |> Dict.insert Whitespace 1
@@ -226,11 +227,11 @@ checkMatching = \ utfLst, reg  ->
     
     matchStr = \ utf, pattern ->
         checkRange = ( \ val, ranges -> 
-                        List.walk ranges Outside  (\ _state, elem ->
+                        List.walkUntil ranges Outside  (\ _state, elem ->
                             if val >= elem.left  && val <= elem.right then
-                                Within
+                                Break Within
                             else
-                                Outside ))
+                                Continue Outside ))
         when pattern is 
             LimitRanges lst -> 
                 when checkRange utf lst is 
@@ -341,9 +342,7 @@ checkMatching = \ utfLst, reg  ->
                                             |> (\ updatedCurrent ->  
                                                 List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
                                             |> ( \ updatedState ->
-                                                List.concat chain (List.dropFirst regItem.current 1)
-                                                |> (\ updatedCurrent ->  
-                                                        List.concat updatedState (updateRegexItemInternal [] {regItem & current : updatedCurrent}) ))
+                                                        List.concat updatedState (updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)}))
                                                 
                                     NTimes cnt -> 
                                         
@@ -391,8 +390,7 @@ checkMatching = \ utfLst, reg  ->
                                             List.concat [{pat & serie : Once}] changeFront
                                             |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
                                             |> ( \ updatedState ->
-                                                List.concat [{pat & serie : Once}] (List.dropFirst regItem.current 1)
-                                                |> (\ updatedCurrent ->  List.append updatedState {regItem & current : updatedCurrent} ))
+                                                List.append updatedState {regItem & current : (List.dropFirst regItem.current 1)} )
                                     NTimes cnt -> 
                                         List.concat (concatIter cnt [{pat & serie : Once}]  [] ) (List.dropFirst regItem.current 1)
                                         |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
@@ -559,7 +557,7 @@ stagesCreationRegex  = \ _param ->
                     List.walkUntil  secondStagePatterns (Ok stage1Pat) ( \ state, pat  ->
                         when state is 
                             Ok currentPatterns ->
-                                dbg  pat.str
+
                                 patternResult = regexCreationStage2 pat.str stage2Pat  []
 
                                 
@@ -666,8 +664,7 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                                 
                                             Err _ -> Err "Wrong usage of + in pattern"        
                                         )
-                            dbg result.tag     
-                            dbg  printMe  state.lst
+
                             when  result.tag is 
                                 Character ->
                                     when List.first result.parsedResult.matched is 
@@ -693,24 +690,24 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                 NoDigit ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken NoDigit Once Bool.false )  }
                                 Alphanumeric ->
-                                    limitRangToken = LimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' }]
+                                    limitRangToken = LimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' },{ left : '_', right : '_' }]
                                     Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once Bool.false )  }
                                 NoAlphanumeric ->
-                                    limitRangToken = ReverseLimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' }]
+                                    limitRangToken = ReverseLimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' },{ left : '_', right : '_' }]
                                     Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once Bool.false )  }
                                 Whitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
                                 Only -> 
-                                    dbg  result.parsedResult.captured
+
                                     when createOnlyOutOfTree result.parsedResult.captured is
                                         Ok onlyToken -> 
                                             Ok { state &  lst : modifLastInChain state.lst onlyToken }
                                         Err message ->
                                             Err message
                                 Except -> 
-                                    dbg  result.parsedResult.captured
+
                                     Ok state
                                 BackSlash->
                                     when result.parsedResult.matched is 
@@ -719,7 +716,7 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                         _ -> Err "back slash parser  match problem"
                                     
                                 Repetition ->
-                                    dbg result.parsedResult.captured
+
                                     when createRepetitionOutOfTree result.parsedResult.captured is
                                         Ok serie -> 
                                             when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
@@ -729,7 +726,7 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                         Err message ->
                                             Err message  
                                 RangeRepetition ->
-                                    dbg result.parsedResult.captured
+
                                     when createRepetitionOutOfTree result.parsedResult.captured is
                                         Ok serie -> 
                                             when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
@@ -768,8 +765,6 @@ regexCreationStage2  = \ str, patterns, currReg ->
             Err NoTokens ->  Err "NoTokens"
             Err PriorityListErr ->  Err "PriorityListErr"
     )
-    
-
 # dbg does not always  works so I  am using this : ) 
 printMe = (  \ arrayPrt ->
     List.walk arrayPrt "" (  \ inState , token ->
@@ -805,8 +800,6 @@ printMe = (  \ arrayPrt ->
             _ -> 
                 "\n unknown token "
         )
-        
-        
 )
 
 
@@ -898,52 +891,70 @@ changeValue = \ tree, id, value->
          
 
 seekInTreeOnlyExcept = ( \ head, tree, errMess -> 
-            List.walk head.children (Ok { characterSet : [], limitRanges : [] }) ( \ state, childId ->
-                when state is 
-                    Ok items ->
-                            
-                        when getDirectlyChildrenCnt tree childId is 
-                            Ok  cnt ->
-                                
-                                    if cnt == 1 then 
-                                        when  (getValue [0] childId tree) is 
-                                            Ok val -> 
-                                                Ok { items & characterSet :  List.concat items.characterSet  val  }
-                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value" )
+    List.walk head.children (Ok { characterSet : [], limitRanges : [] }) ( \ stateOutResult, topChildIdId ->
+        when Dict.get tree.content topChildIdId is
+            Ok childHead ->
+                childResult =
+                    List.walk childHead.children (Ok { characterSet : [], limitRanges : [] }) ( \ state, childId ->
+                        when state is 
+                            Ok items ->
+                                    
+                                when getDirectlyChildrenCnt tree childId is 
+                                    Ok  cnt ->
+                                            if cnt == 1 then 
+                                                when  (getValue [0] childId tree) is 
+                                                    Ok val -> 
+                                                        when val is 
+                                                            [ '\\', secVal ] ->
+                                                                Ok { items & characterSet :  List.append items.characterSet  secVal  }
+                                                            _ -> 
+                                                                Ok { items & characterSet :  List.concat items.characterSet  val  }
+                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value" )
 
-                                    else if cnt == 2 then
-                                        getFirst = (\  valLst ->
-                                            when List.first valLst is 
-                                                Ok val -> Ok val
-                                                Err _ -> Err  "no value"
-                                            )
-                                                                      
-                                        when (getValue [0] childId tree) is    
-                                            Ok val1Lst -> 
-                                                when getFirst val1Lst is
-                                                    Ok val1 ->
-                                                        when (getValue [1] childId tree)  is
-                                                            Ok val2Lst ->
-                                                                when getFirst val2Lst is
-                                                                    Ok val2 -> 
-                                                                        Ok { items & limitRanges :  List.append items.limitRanges  { left : val1, right : val2 } }
-                                                                        
+                                            else if cnt == 2 then
+                                                getFirst = (\  valLst ->
+                                                    when List.first valLst is 
+                                                        Ok val -> Ok val
+                                                        Err _ -> Err  "no value"
+                                                    )
+                                                                            
+                                                when (getValue [0] childId tree) is    
+                                                    Ok val1Lst -> 
+                                                        when getFirst val1Lst is
+                                                            Ok val1 ->
+                                                                when (getValue [1] childId tree)  is
+                                                                    Ok val2Lst ->
+                                                                        when getFirst val2Lst is
+                                                                            Ok val2 -> 
+                                                                                Ok { items & limitRanges :  List.append items.limitRanges  { left : val1, right : val2 } }
+                                                                                
+                                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
                                                                     Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
-                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
+                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
+                                                            
                                                     Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
-                                                    
-                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
 
-                                    else 
-                                        Err (Str.concat errMess "wrong second level child structure" )
-                            Err _ -> Err (Str.concat errMess "wrong second level child structure" )
-                                
-                    Err  message -> Err  message  
-                ))
+                                            else 
+                                                Err (Str.concat errMess "wrong second level child structure" )
+                                    Err _ -> Err (Str.concat errMess "wrong second level child structure" )
+                                        
+                            Err  message -> Err  message  
+                        )
+                when stateOutResult is 
+                    Ok stateOut ->
+                        when childResult is 
+                            Ok result ->
+                                Ok { characterSet : List.concat  result.characterSet stateOut.characterSet,
+                                limitRanges : List.concat result.limitRanges stateOut.limitRanges}        
+                            Err  message -> Err  message    
+                    Err  message -> Err  message         
+                
+            Err  _ -> Err (Str.concat errMess "wrong structure" )  
+            ))
 
 createExceptOutOfTree =  \ tree ->
     errMess = "Except token problem:  "
-    when Dict.get tree.content 1  is 
+    when Dict.get tree.content 0  is 
         Ok head ->
             searchResult = seekInTreeOnlyExcept head tree errMess
             when  searchResult is 
@@ -970,7 +981,7 @@ createExceptOutOfTree =  \ tree ->
 
 createOnlyOutOfTree =  \ tree ->
     errMess = "Only token problem:  "
-    when Dict.get tree.content 1  is 
+    when Dict.get tree.content 0  is 
         Ok head ->
             searchResult = seekInTreeOnlyExcept head tree errMess
             when  searchResult is 
@@ -1175,9 +1186,184 @@ main =
         |> List.append  (createToken (Sequence  chainOut)  Once Bool.false) 
         |> List.append  (createToken  CaptureClose  Once Bool.false)
         |> List.append  (createToken  ( Character ']' )  Once Bool.false)
+    Stdout.line "outStr"
+
+#################### parse succeed/failed tests ####################
+    
+# rudimentary tests
+expect
+    when parseStr "a" "a" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test characters matching"
+               
+expect
+    when parseStr "b" "a" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test characters matching"
         
+expect
+    when parseStr "aaaabbcabcadsa" "abc" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test characters matching"  
+        
+expect
+    when parseStr "aaaabcdfa" "abcdef" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test characters matching"
+        
+expect
+    when parseStr "aghdsad" "." is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test dot matching"
+        
+expect
+    when parseStr "agh" "...." is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test dot matching"
+        
+expect
+    when parseStr "abcd323sfsddgf" "\\d\\d\\d" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test digit matching"
+        
+expect
+    when parseStr "abcd32sfsddgf" "\\d\\d\\d" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test digit matching"
+        
+expect
+    when parseStr "24423abd45236436" "\\D\\D\\D" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test digit matching"
+        
+expect
+    when parseStr "24423ab3d45236436" "\\D\\D\\D" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test digit matching"
+        
+expect
+    when parseStr "24423...45236436" "\\.\\.\\." is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test period matching"
+        
+expect
+    when parseStr "24423..3d.45236436" "\\.\\.\\." is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test period matching"
+        
+expect
+    when parseStr "2A_d" "\\w\\w\\w\\w" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test alphanumeric matching"
+        
+expect
+    when parseStr "2A_]{d" "\\w\\w\\w\\w" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test alphanumeric matching"
+            
+expect
+    when parseStr "#@$a%^&*" "\\W\\W\\W\\W" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test non-alphanumeric matching"
+        
+expect
+    when parseStr "#@$a%^_&*" "\\W\\W\\W\\W" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test non-alphanumeric matching"    
+        
+expect
+    str = "  dd  \n\rdsda   d "
+    when parseStr str "\\s\\s\\s\\s" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test whitespaces matching"
+        
+expect
+    str = "  dd  \ndsda   d "
+    when parseStr str "\\s\\s\\s\\s" is 
+    Ok parsed ->
+        parsed.result == Bool.false
+    Err mes -> mes == "test whitespaces matching"
+        
+expect
+    str = "  dd  \n\rdsda   d "
+    when parseStr str "\\S\\S\\S\\S" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test non-whitespaces matching"
+        
+expect
+    str = "  dd  \ndsd\ra   d "
+    when parseStr str "\\S\\S\\S\\S" is 
+    Ok parsed ->
+        parsed.result == Bool.false
+    Err mes -> mes == "test non-whitespaces matching"  
+
+expect
+    when parseStr "abcd" "ab?c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test optional character matching"
+
+expect
+    when parseStr "acd" "ab?c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test optional character matching"
+
+expect        
+    when parseStr "abbcd" "ab?c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test optional character matching"
+
+expect
+    when parseStr "abcd" "a(bc)?d" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test optional characters matching"
+ 
+ expect
+    when parseStr "ad" "a(bc)?d" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test optional characters matching"
+
+expect 
+    when parseStr "abd" "a(bc)?d" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test optional characters matching"
+      
+expect  
+    when parseStr "abcbcd" "a(bc)?d" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test optional characters matching"
+        
+        
+# more  complex  test
+
+
+ 
     
                 
-    Stdout.line "outStr"
+
     
     
