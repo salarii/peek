@@ -40,8 +40,8 @@ aux1Patt =  "T(((.+)))T"
 
 secondStagePatterns =  [
     { tag : BackSlash, str : "\\T.?{}^*T" },  # " 
-    { tag : Repetition, str : "{(\\d)}"},   #"   
-    { tag : RangeRepetition, str : "{(\\d),(\\d)}" }, # "
+    { tag : Repetition, str : "{(\\d)+}"},   #"   
+    { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, # "
     { tag : Only, str : "[(((.)-(.))|((.+))|((\\T.?{}^*T)))+]" }, # "
     { tag : Except, str : "[^(((.)-(.))|((.+))|((\\T.?{}^*T)))+]" }]  # "
         
@@ -54,6 +54,7 @@ priorities =
     |> Dict.insert CaptureOpen 1
     |> Dict.insert CaptureClose 1
     |> Dict.insert AtLeastOne 1
+    |> Dict.insert ZeroOrMore 1
     |> Dict.insert Separator 1
     |> Dict.insert Digit 1
     |> Dict.insert NoDigit 1
@@ -64,6 +65,8 @@ priorities =
     |> Dict.insert NoWhitespace 1
     |> Dict.insert Only 2
     |> Dict.insert BackSlash 2
+    |> Dict.insert Repetition 2   
+    |> Dict.insert RangeRepetition 2
     
 charToUtf = \ char ->
     Str.toUtf8 char
@@ -232,6 +235,7 @@ checkMatching = \ utfLst, reg  ->
                                 Break Within
                             else
                                 Continue Outside ))
+        
         when pattern is 
             LimitRanges lst -> 
                 when checkRange utf lst is 
@@ -275,6 +279,9 @@ checkMatching = \ utfLst, reg  ->
             _ -> NoMatch
     
     matchUtf = ( \ utf, tokenMeta ->
+        #dbg "check  matching"
+        #dbg  Str.fromUtf8 [utf]
+        #dbg printMe [tokenMeta]
         result = matchStr utf tokenMeta.token
        
         when result is
@@ -314,8 +321,7 @@ checkMatching = \ utfLst, reg  ->
                                             List.concat chain (List.dropFirst regItem.current 1)
                                             |> (\ updatedCurrent ->  
                                                     List.concat updatedState (updateRegexItemInternal [] {regItem & current : updatedCurrent}) ))
-                                    ZeroOrMore ->
- 
+                                    ZeroOrMore ->  
                                         List.concat state
                                             (List.concat chain  regItem.current
                                             |> (\ updatedCurrent -> ( updateRegexItemInternal [] {regItem & current : updatedCurrent, meta : Active} )))
@@ -341,9 +347,8 @@ checkMatching = \ utfLst, reg  ->
                                             List.concat chain changeFront
                                             |> (\ updatedCurrent ->  
                                                 List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
-                                            |> ( \ updatedState ->
-                                                        List.concat updatedState (updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)}))
-                                                
+                                            |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
+                                
                                     NTimes cnt -> 
                                         
                                         List.concat (concatIter cnt chain  [] ) (List.dropFirst regItem.current 1)
@@ -389,9 +394,9 @@ checkMatching = \ utfLst, reg  ->
                                                 
                                             List.concat [{pat & serie : Once}] changeFront
                                             |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
-                                            |> ( \ updatedState ->
-                                                List.append updatedState {regItem & current : (List.dropFirst regItem.current 1)} )
-                                    NTimes cnt -> 
+                                            |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
+                                
+                                    NTimes cnt ->
                                         List.concat (concatIter cnt [{pat & serie : Once}]  [] ) (List.dropFirst regItem.current 1)
                                         |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
                                     Once ->
@@ -410,16 +415,23 @@ checkMatching = \ utfLst, reg  ->
             when List.first state.current is
                 Ok pat -> 
                     Active { pattern : pat , state : state } 
-                Err _ ->
-                    if state.meta == Origin then
-                        # BUG  in this  line
-                        # getFirstPat  { state & current : state.regex } 
-                        getFirstPat  { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed, left : state.left, captured : state.captured, meta : state.meta, strict : state.strict } 
-
-                    else   
-                        Inactive {state & meta : Inactive } 
+                Err _ ->  
+                    Inactive {state & meta : Inactive } 
             )
 
+    regeneratePat = (\  state  -> 
+        when List.first state.current is
+            Ok pat -> 
+                Old state
+            Err _ ->  
+                if state.meta == Origin then
+                    # BUG  in this  line
+                    # getFirstPat  { state & current : state.regex } 
+                    New { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed, left : state.left, captured : state.captured, meta : state.meta, strict : state.strict } 
+                else 
+                    New {state & meta : Inactive }  )
+            
+            
     checkLastListEmpty = (\ listOfLists  ->
             when List.last listOfLists is
                 Ok lst -> 
@@ -456,11 +468,22 @@ checkMatching = \ utfLst, reg  ->
                                             updatedState.captured
                                     when matchUtf utf  matchThis.pattern is 
                                         Consume updatedToken ->
-                                             
-                                            if List.len current == 0 then
+                                            
+                                            allowEnd = \ lst ->
+                                                List.walkUntil lst Bool.true ( \allow, elem ->
+                                                    if elem.token == CaptureClose then 
+                                                        Continue allow
+                                                    else
+                                                        Break Bool.false 
+                                                ) 
+                                            
+                                            if allowEnd current == Bool.true then
                                                 List.append curState { updatedState &  matched : List.append updatedState.matched  utf, current : current, result : Bool.true, left : [], captured : updatedCapture}
                                             else
-                                                List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture} 
+                                                when regeneratePat updatedState is 
+                                                    Old _ -> 
+                                                        List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture} 
+                                                    New newState ->  List.append curState  newState
                                         NoMatch _ ->
 
                                                 updateMissed = 
@@ -560,7 +583,6 @@ stagesCreationRegex  = \ _param ->
 
                                 patternResult = regexCreationStage2 pat.str stage2Pat  []
 
-                                
                                 when patternResult is 
                                     Ok pattern ->
                                         Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
@@ -578,10 +600,14 @@ regexCreationStage2  = \ str, patterns, currReg ->
     |> ( \ resultSet -> 
         when resultSet is
             Ok  results ->
-                List.walk results (Ok { lst : [] , capture : Bool.false }) ( \ outState, result  ->
+                List.walk results (Ok { lst : [] , capture : 0 }) ( \ outState, result  ->
                     when outState is 
                         Err message -> Err message 
                         Ok state ->
+                            doCapture = \ capture  ->
+                                capture > 0
+                            
+                            
                             modifLastInChain = (\ chainLst, token ->
                                 when List.last chainLst is 
                                     Ok elem ->
@@ -662,43 +688,43 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                                             Err  message -> Err  message  
                                                         
                                                 
-                                            Err _ -> Err "Wrong usage of + in pattern"        
+                                            Err _ -> Err "Wrong usage of +/*/Repetition/? in pattern"        
                                         )
-
+                 
                             when  result.tag is 
                                 Character ->
                                     when List.first result.parsedResult.matched is 
                                         Ok  matched  ->
-                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character matched) Once state.capture) }
+                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character matched) Once (doCapture state.capture)) }
                                         Err _ -> Err "parser  match problem"
                                     
                                 Dot ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken Dot Once state.capture )  }
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken Dot Once (doCapture state.capture) )  }
                                 CaptureOpen ->
                                     
                                     openLst = 
                                         modifLastInChain state.lst (createToken CaptureOpen Once Bool.false)
                                         |> modifLastInChain  (createToken (Sequence []) Once Bool.false)
-                                    Ok { lst : openLst, capture : Bool.true}
+                                    Ok { lst : openLst, capture : state.capture + 1}
                                 CaptureClose ->
-                                    Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : Bool.false }
+                                    Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : state.capture - 1 }
                                 Separator -> 
                                     Ok { state &  lst : modifLastInChain state.lst (createToken Separator Once Bool.false )  }
                                 
                                 Digit ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken Digit Once Bool.false )  }
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken Digit Once (doCapture state.capture) )  }
                                 NoDigit ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken NoDigit Once Bool.false )  }
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken NoDigit Once (doCapture state.capture) )  }
                                 Alphanumeric ->
                                     limitRangToken = LimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' },{ left : '_', right : '_' }]
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once Bool.false )  }
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once (doCapture state.capture) )  }
                                 NoAlphanumeric ->
                                     limitRangToken = ReverseLimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' },{ left : '_', right : '_' }]
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once Bool.false )  }
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once (doCapture state.capture) )  }
                                 Whitespace ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
                                 NoWhitespace ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once Bool.false ) }
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
                                 Only -> 
 
                                     when createOnlyOutOfTree result.parsedResult.captured is
@@ -712,11 +738,10 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                 BackSlash->
                                     when result.parsedResult.matched is 
                                         [backslash, sign ] ->
-                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character sign) Once state.capture) }
+                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character sign) Once (doCapture state.capture)) }
                                         _ -> Err "back slash parser  match problem"
                                     
                                 Repetition ->
-
                                     when createRepetitionOutOfTree result.parsedResult.captured is
                                         Ok serie -> 
                                             when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
@@ -1019,12 +1044,18 @@ createRepetitionOutOfTree =  \ tree ->
             searchResult = List.walkUntil head.children (Ok []) ( \ stateResult, childId ->
                 when  stateResult  is 
                     Ok state ->
-                        when  (getValue [0] childId tree) is 
+
+                        when  (getDirectly tree childId ) is 
                             Ok valLst ->
-                                when valLst is 
-                                    [ val ] ->  
-                                        Continue (Ok  (List.append state  val) )
-                                    _ -> Break ( Err (Str.concat errMess "wrong child structure" )) 
+                                when Str.fromUtf8 valLst is
+                                    Ok strVal ->
+                                        when Str.toU32 strVal  is 
+                                            Ok numVal ->
+                                                Continue (Ok  (List.append state  numVal) )
+                                            Err _ -> Break (Err (Str.concat errMess "wrong child structure, incompatible value" ))     
+                                    Err _ ->
+                                        Break (Err (Str.concat errMess "wrong child structure, incompatible value" ))                 
+            
                             Err _ -> 
                                 Break (Err (Str.concat errMess "wrong child structure, missing value" ))
                     Err message -> Break (Err message)
@@ -1111,13 +1142,13 @@ parseStr = \ str, pattern ->
     when availableRegex is 
         Ok stage1Pat -> 
             tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
-            
+
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
+                   
+                    dbg  printMe  tokensFromUserInput
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
-                    
                     # for now get longest maybe??
-                    
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive)  ( \ state, regexParser ->  
                         parsResult = checkMatching (Str.toUtf8  str ) regexParser    
                         if state.result == Bool.true then
@@ -1133,62 +1164,46 @@ parseStr = \ str, pattern ->
         Err message -> 
             Err  (Str.concat "This is internal regex error not your fault\n"  message )
 
-# availableRegex = stagesCreationRegex [] 
     
 main =
-    pattern = "aaaa"
-    # pp =  parseStr  "sss"   "a"
 
-    avil  =availableRegex
-
-    zzz =
-        when  avil  is 
-            Ok  ddd ->  
-                z = 
-                    List.walk ddd  0 ( \ state, item -> 
-                        #dbg printMe  item.tokens
-                        state
-                    )
-                 
-                "dddddd"
-            
-            Err _  -> "aaaa"
-
-    testModify = ( \ tree,fun, value  -> 
-        fun tree  0 value )
-            
-    res = 
-        testModify  treeBase  composeMatchedStructure   CaptureOpen  
-        |> testModify  composeMatchedStructure   CaptureOpen
-        |> testModify  changeValue  1
-        |> testModify  composeMatchedStructure   CaptureClose
-        |> testModify  composeMatchedStructure   CaptureOpen
-        |> testModify  changeValue  10
-        |> testModify  composeMatchedStructure   CaptureClose
-        |> testModify  composeMatchedStructure   CaptureClose
-        |> testModify  composeMatchedStructure   CaptureOpen
-        |> testModify  composeMatchedStructure   CaptureOpen
-        |> testModify  changeValue  3
-        |> testModify  changeValue  100
-        |> testModify  composeMatchedStructure   CaptureClose
-        |> testModify  composeMatchedStructure   CaptureClose
-
+    chainIn = 
+        []
+        |> List.append  (createToken  ( Character 'b' )  Once Bool.false )
+        |> List.append  (createToken  ( Character 'b' )  Once Bool.false )
+        
     chainOut = 
         []
-        |> List.append  (createToken  CaptureOpen  Once Bool.false )
-        |> List.append  (createToken (Sequence  [createToken  Dot  AtLeastOne Bool.true])  Once Bool.false)
+        |> List.append  (createToken  ( Character 'a' )  Once Bool.false )
+        |> List.append  (createToken  CaptureOpen  Once Bool.false)
+        |> List.append  (createToken (Sequence chainIn )  Once Bool.false)
         |> List.append  (createToken  CaptureClose  Once Bool.false)
-            
+        |> List.append  (createToken  ( Character 'c' )  Once Bool.false )
+    
     pat  =
         []
-        |> List.append  (createToken  ( Character '[' )  Once Bool.false )
         |> List.append  (createToken  CaptureOpen  Once Bool.false)
         |> List.append  (createToken (Sequence  chainOut)  Once Bool.false) 
         |> List.append  (createToken  CaptureClose  Once Bool.false)
-        |> List.append  (createToken  ( Character ']' )  Once Bool.false)
+        
+
+    res =
+        when parseStr "abbvcbbabbcbcd" "(a(bb)c)" is 
+            Ok parsed ->
+                dbg parsed.captured
+                Ok parsed.result 
+            Err mes -> Err mes
+    dbg  res
+
     Stdout.line "outStr"
 
-#################### parse succeed/failed tests ####################
+
+
+
+
+
+
+#################### succeed/failed tests ####################
     
 # rudimentary tests
 expect
@@ -1357,7 +1372,71 @@ expect
             parsed.result == Bool.false
         Err mes -> mes == "test optional characters matching"
         
+expect        
+    when parseStr "abbbcd" "ab*c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test zero or more matching"
+
+expect        
+    when parseStr "acd" "ab*c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test zero or more matching"
+
+expect
+    when parseStr "abcbcbcdfbcdbgc" "a(bc)*d" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test zero or more matching"  
         
+expect
+    when parseStr "abcfdadbgc" "a(bc)*d" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test zero or more matching"  
+        
+expect
+    when parseStr "abxcfbxcdbgc" "a(bc)*d" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test zero or more matching" 
+        
+expect        
+    when parseStr "abbbcd" "ab+c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test at least one matching"
+
+expect        
+    when parseStr "acd" "ab+c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test at least one matching"
+
+expect
+    when parseStr "abcbcbcdfbcdbgc" "a(bc)+d" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test at least one matching"  
+        
+expect
+    when parseStr "abcfdadbgc" "a(bc)+d" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test at least one matching"  
+        
+expect
+    when parseStr "abxcfbxcdbgc" "a(bc)+d" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test at least one matching"  
+        
+expect        
+    when parseStr "abbbcd" "ab{3}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition matching" 
 # more  complex  test
 
 
