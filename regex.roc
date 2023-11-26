@@ -469,16 +469,19 @@ checkMatching = \ utfLst, reg  ->
                                     when matchUtf utf  matchThis.pattern is 
                                         Consume updatedToken ->
                                             
-                                            allowEnd = \ lst ->
-                                                List.walkUntil lst Bool.true ( \allow, elem ->
+                                            allowEnd = \ lst, allowInState ->
+                                                List.walkUntil lst {allow: Bool.true, state : allowInState }  ( \allowState, elem ->
                                                     if elem.token == CaptureClose then 
-                                                        Continue allow
+                                                        allowStateUpdate = allowState.state
+                                                        Continue {allowState & state : { allowStateUpdate &   captured : composeMatchedStructure allowStateUpdate.captured  0 CaptureClose } }
+                                                        
                                                     else
-                                                        Break Bool.false 
+                                                        Break  { allowState & allow :  Bool.false } 
                                                 ) 
-                                            
-                                            if allowEnd current == Bool.true then
-                                                List.append curState { updatedState &  matched : List.append updatedState.matched  utf, current : current, result : Bool.true, left : [], captured : updatedCapture}
+                                            result = allowEnd current updatedState
+                                            if result.allow == Bool.true then
+                                                allowState = result.state
+                                                List.append curState { allowState &  matched : List.append allowState.matched  utf, current : [], result : Bool.true, left : [], captured : updatedCapture}
                                             else
                                                 when regeneratePat updatedState is 
                                                     Old _ -> 
@@ -1146,7 +1149,6 @@ parseStr = \ str, pattern ->
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
                    
-                    dbg  printMe  tokensFromUserInput
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
                     # for now get longest maybe??
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive)  ( \ state, regexParser ->  
@@ -1188,7 +1190,7 @@ main =
         
 
     res =
-        when parseStr "abbvcbbabbcbcd" "(a(bb)c)" is 
+        when parseStr "ab" "(ab)" is 
             Ok parsed ->
                 dbg parsed.captured
                 Ok parsed.result 
@@ -1198,7 +1200,16 @@ main =
     Stdout.line "outStr"
 
 
-
+#ArrayType : {values: List a ,branch : [Children arrayType] }
+#NodeType a  b :  { children : List (Num a), locked : Bool, value : List b} where a implements Hash & Eq
+#TreeType a: { cnt : Num a, content : Dict (Num a) { children : List (Num a)}  } where a implements Hash & Eq
+#createTreePattern : treeType, arrayType, (Num a) -> nodeType where a implements Hash & Eq
+#createTreePattern = \ tree, lst, parentId ->
+    #node  = { locked : Bool.true, children :  [], value : lst.values }
+    #updatedTree = addElement  tree parentId node 
+    #Children children = lst.branch
+    #createTreePattern updatedTree children tree.cnt
+            
 
 
 
@@ -1437,6 +1448,116 @@ expect
         Ok parsed ->
             parsed.result == Bool.true
         Err mes -> mes == "test repetition matching" 
+        
+expect        
+    when parseStr "abbbbbbbbbbbcd" "ab{11}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition matching" 
+        
+expect        
+    when parseStr "abbbbcd" "ab{3}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition matching" 
+
+expect        
+    when parseStr "abbcd" "ab{3}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition matching" 
+        
+expect        
+    when parseStr "abbbbbbcd" "a(bb){3}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition matching" 
+        
+expect        
+    when parseStr "abbbbbbbcd" "a(bb){3}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition matching" 
+        
+expect        
+    when parseStr "abbcd" "a(bb){3}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition matching"
+        
+expect        
+    when parseStr "abcd" "ab{1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition range matching"  
+        
+expect        
+    when parseStr "abbcd" "ab{1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition range matching"  
+        
+expect        
+    when parseStr "acd" "ab{1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition range matching"  
+        
+        
+expect        
+    when parseStr "abbbcd" "ab{1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition range matching"  
+        
+expect        
+    when parseStr "abbbbbbbbbbcd" "ab{10,11}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition range matching" 
+        
+expect        
+    when parseStr "abbbbbbbbbcd" "ab{10,11}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition range matching"
+        
+expect        
+    when parseStr "abcd" "ab{1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition range matching"  
+        
+expect        
+    when parseStr "abbcd" "a(bb){1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition range matching"  
+        
+expect        
+    when parseStr "abbbbcd" "a(bb){1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test repetition range matching"  
+        
+expect        
+    when parseStr "abbbcd" "a(bb){1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition range matching"  
+        
+expect        
+    when parseStr "abbbbbbcd" "a(bb){1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition range matching"  
+         
+expect        
+    when parseStr "acd" "a(bb){1,2}c" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test repetition range matching"  
+         
 # more  complex  test
 
 
