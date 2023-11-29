@@ -42,7 +42,7 @@ secondStagePatterns =  [
     { tag : BackSlash, str : "\\T.?{}^*T" },  # " 
     { tag : Repetition, str : "{(\\d)+}"},   #"   
     { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, # "
-    { tag : Only, str : "[(((.)-(.))|((.+))|((\\T.?{}^*T)))+]" }, # "
+    { tag : Only, str : "[(((.)-(.))|((.))|((\\T.?{}^*T)))+]" }, # "
     { tag : Except, str : "[^(((.)-(.))|((.+))|((\\T.?{}^*T)))+]" }]  # "
         
 
@@ -215,6 +215,8 @@ evalRegex = \ utfLst, patterns, regex ->
  
         List.walk patterns [] ( \ state, pattern ->
             out = checkMatching utfLst pattern.tokens
+            #dbg  pattern.tag
+            #dbg  printMe pattern.tokens
             if out.result == Bool.true  && List.isEmpty out.missed then
                 List.append state { tag : pattern.tag, parsedResult : out } 
             else
@@ -729,7 +731,6 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
                                 Only -> 
-
                                     when createOnlyOutOfTree result.parsedResult.captured is
                                         Ok onlyToken -> 
                                             Ok { state &  lst : modifLastInChain state.lst onlyToken }
@@ -1143,12 +1144,12 @@ availableRegex = stagesCreationRegex []
 parseStr = \ str, pattern -> 
     
     when availableRegex is 
-        Ok stage1Pat -> 
+        Ok stage1Pat ->
             tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
 
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
-                   
+
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
                     # for now get longest maybe??
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive)  ( \ state, regexParser ->  
@@ -1169,33 +1170,54 @@ parseStr = \ str, pattern ->
     
 main =
 
-    chainIn = 
+
+    chainRange =
         []
-        |> List.append  (createToken  ( Character 'b' )  Once Bool.false )
-        |> List.append  (createToken  ( Character 'b' )  Once Bool.false )
-        
-    chainOut = 
-        []
-        |> List.append  (createToken  ( Character 'a' )  Once Bool.false )
         |> List.append  (createToken  CaptureOpen  Once Bool.false)
-        |> List.append  (createToken (Sequence chainIn )  Once Bool.false)
+        |> List.append  (createToken (Sequence [(createToken  Dot  Once Bool.false)] )  Once Bool.false)
         |> List.append  (createToken  CaptureClose  Once Bool.false)
-        |> List.append  (createToken  ( Character 'c' )  Once Bool.false )
+        |> List.append  (createToken  ( Character '-' )  Once Bool.false )
+        |> List.append  (createToken  CaptureOpen  Once Bool.false)
+        |> List.append  (createToken (Sequence [(createToken  Dot  Once Bool.false)] )  Once Bool.false)
+        |> List.append  (createToken  CaptureClose  Once Bool.false)
+        
+    chainDot = 
+        []
+        |> List.append  (createToken  CaptureOpen  Once Bool.false)
+        |> List.append  (createToken (Sequence [(createToken  Dot  Once Bool.false)] )  Once Bool.false)
+        |> List.append  (createToken  CaptureClose  Once Bool.false)
+        
+    chainMain = 
+        []
+        |> List.append  (createToken  CaptureOpen  Once Bool.false)
+        |> List.append  (createToken (Sequence chainRange )  Once Bool.false)
+        |> List.append  (createToken  CaptureClose  Once Bool.false)
+        |> List.append  (createToken  Separator  Once Bool.false)
+        |> List.append  (createToken  CaptureOpen  Once Bool.false)
+        |> List.append  (createToken (Sequence chainDot )  Once Bool.false)
+        |> List.append  (createToken  CaptureClose  Once Bool.false)
     
     pat  =
         []
+        |> List.append  (createToken  ( Character '[' )  Once Bool.false )
         |> List.append  (createToken  CaptureOpen  Once Bool.false)
-        |> List.append  (createToken (Sequence  chainOut)  Once Bool.false) 
+        |> List.append  (createToken (Sequence  chainMain)  Once Bool.false) 
         |> List.append  (createToken  CaptureClose  Once Bool.false)
-        
-
-    res =
-        when parseStr "ab" "(ab)" is 
-            Ok parsed ->
-                dbg parsed.captured
-                Ok parsed.result 
-            Err mes -> Err mes
-    dbg  res
+        |> List.append  (createToken  ( Character ']' )  Once Bool.false )
+     
+     
+    #dbg  printMe   pat
+    #res = checkMatching (Str.toUtf8  "[a-g]" )  pat
+    res = checkMatching (Str.toUtf8  "a" )  [(createToken  ( Character 'a' )  Once Bool.false )]
+    
+    #ress =
+    #    when parseStr "a" "[a-g]"  is 
+    #        Ok parsed ->
+    #            dbg parsed.captured
+                
+    #            Ok parsed.result 
+    #        Err mes -> Err mes
+    #dbg  res
 
     Stdout.line "outStr"
 
@@ -1558,6 +1580,17 @@ expect
             parsed.result == Bool.false
         Err mes -> mes == "test repetition range matching"  
          
+expect        
+    when parseStr "a" "[a-g]" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test one of matching"  
+         
+expect        
+    when parseStr "abhd" "ab[a-g]d" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test one of matching"  
 # more  complex  test
 
 
