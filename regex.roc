@@ -171,24 +171,24 @@ splitChainOnSeparators = \ chain, inputLst ->
                             List.append state lst
                         )
                         |>   List.append []
-                Sequence  inChain ->
+                #Sequence  inChain ->
 
-                    partialSeqResult =
-                        List.walk ( splitChainOnSeparators inChain []) [] ( \ outState, frontLst ->                               
+                #    partialSeqResult =
+                #        List.walk ( splitChainOnSeparators inChain []) [] ( \ outState, frontLst ->                               
                             
-                            List.walk ( splitChainOnSeparators (List.dropFirst chain 1) []) outState ( \ state, lst ->                                
-                                List.append state  ( List.concat [ {elem & token : Sequence frontLst } ]  lst) 
-                            )        
-                        )   
+                #            List.walk ( splitChainOnSeparators (List.dropFirst chain 1) []) outState ( \ state, lst ->                                
+                #                List.append state  ( List.concat [ {elem & token : Sequence frontLst } ]  lst) 
+                #            )        
+                #        )   
           
-                    when List.last partialSeqResult is
-                        Ok activElem ->
-                            List.dropLast partialSeqResult 1
-                            |> List.walk  [] ( \ state,  lst ->
-                                List.append state (List.concat inputLst lst))
-                            |> List.append  activElem
-                        Err _ ->
-                            []
+                #    when List.last partialSeqResult is
+                #        Ok activElem ->
+                #            List.dropLast partialSeqResult 1
+                #            |> List.walk  [] ( \ state,  lst ->
+                #                List.append state (List.concat inputLst lst))
+                #            |> List.append  activElem
+                #        Err _ ->
+                #            []
                      
                 _ ->
 
@@ -310,23 +310,28 @@ checkMatching = \ utfLst, reg  ->
                                 updateRegexItemInternal state { tmpState &   captured : composeMatchedStructure tmpState.captured  0 CaptureClose } 
                         
                             Sequence  chain ->
+                                chains = splitChainOnSeparators chain []
                                 when pat.serie is 
                                     AtLeastOne ->   
                                         changeFront = 
                                             (List.dropFirst regItem.current 1)
                                             |> List.prepend { pat & serie : ZeroOrMore }
                                         
-                                        List.concat chain changeFront
-                                        |> (\ updatedCurrent ->  
-                                                List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
-                                        |> ( \ updatedState ->
-                                            List.concat chain (List.dropFirst regItem.current 1)
+                                        List.walk  chains  state  (  \ inState, inChain  ->
+                                            List.concat inChain changeFront
                                             |> (\ updatedCurrent ->  
-                                                    List.concat updatedState (updateRegexItemInternal [] {regItem & current : updatedCurrent}) ))
+                                                    List.concat inState (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
+                                            |> ( \ updatedState ->
+                                                List.concat inChain (List.dropFirst regItem.current 1)
+                                                |> (\ updatedCurrent ->  
+                                                        List.concat updatedState (updateRegexItemInternal [] {regItem & current : updatedCurrent}) ))
+                                        )
                                     ZeroOrMore ->  
-                                        List.concat state
-                                            (List.concat chain  regItem.current
-                                            |> (\ updatedCurrent -> ( updateRegexItemInternal [] {regItem & current : updatedCurrent, meta : Active} )))
+                                        List.walk  chains  state  (  \ inState, inChain  ->
+                                            List.concat inState
+                                                (List.concat inChain  regItem.current
+                                                |> (\ updatedCurrent -> ( updateRegexItemInternal [] {regItem & current : updatedCurrent, meta : Active} )))
+                                        )
                                         |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                     
                                     MNTimes m n -> 
@@ -334,10 +339,11 @@ checkMatching = \ utfLst, reg  ->
                                             (List.dropFirst regItem.current 1)
                                             |> List.prepend { pat & serie : NoMorethan n }
                                             
-                                        List.concat (concatIter m chain  [] ) changeFront
-                                        |> (\ updatedCurrent -> 
-                                                 List.concat state ( updateRegexItemInternal [] {regItem & current : updatedCurrent} ) )
-
+                                        List.walk  chains  state  (  \ inState, inChain  ->   
+                                            List.concat (concatIter m inChain  [] ) changeFront
+                                            |> (\ updatedCurrent -> 
+                                                    List.concat inState ( updateRegexItemInternal [] {regItem & current : updatedCurrent} ) )
+                                        )
                                     NoMorethan cnt -> 
                                         if  cnt == 0 then
                                             List.concat state  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
@@ -345,21 +351,25 @@ checkMatching = \ utfLst, reg  ->
                                             changeFront = 
                                                 (List.dropFirst regItem.current 1)
                                                 |> List.prepend { pat & serie : NoMorethan (cnt - 1) }
-                                            
-                                            List.concat chain changeFront
-                                            |> (\ updatedCurrent ->  
-                                                List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
+                                            List.walk  chains  state  (  \ inState, inChain  -> 
+                                                List.concat inChain changeFront
+                                                |> (\ updatedCurrent ->  
+                                                    List.concat inState (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
+                                            )   
                                             |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                 
                                     NTimes cnt -> 
-                                        
-                                        List.concat (concatIter cnt chain  [] ) (List.dropFirst regItem.current 1)
-                                        |> (\ updatedCurrent -> 
-                                                 List.concat state ( updateRegexItemInternal [] {regItem & current : updatedCurrent} ) )  
+                                        List.walk  chains  state  (  \ inState, inChain  ->
+                                            List.concat (concatIter cnt inChain  [] ) (List.dropFirst regItem.current 1)
+                                            |> (\ updatedCurrent -> 
+                                                    List.concat inState ( updateRegexItemInternal [] {regItem & current : updatedCurrent} ) )  
+                                        )
                                     Once ->
-                                        List.concat chain (List.dropFirst regItem.current 1)
-                                        |> (\ updatedCurrent ->  
-                                            List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent}) )  
+                                        List.walk  chains  state  (  \ inState, inChain  ->
+                                            List.concat chain (List.dropFirst regItem.current 1)
+                                            |> (\ updatedCurrent ->  
+                                                List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent}) )  
+                                        )
                             _ -> 
                                 when pat.serie is 
                                     AtLeastOne ->      
@@ -448,7 +458,16 @@ checkMatching = \ utfLst, reg  ->
             
             updatedStates = updateRegex outState 
             List.walk updatedStates [] ( \ state, processedReg ->   
-
+                
+                
+                d = 
+                    if  (Str.toUtf8  "[a-g]" ) ==  utfLst  then
+                        # it is  stupid  but without  this line it is crashing
+                        a  =  printMe  processedReg.regex
+                        8
+                    else  
+                        9
+                
                 if processedReg.result == Bool.true then
                     List.append state { processedReg & left : List.append  processedReg.left utf} 
                 else   
@@ -1208,16 +1227,16 @@ main =
      
     #dbg  printMe   pat
     #res = checkMatching (Str.toUtf8  "[a-g]" )  pat
-    res = checkMatching (Str.toUtf8  "a" )  [(createToken  ( Character 'a' )  Once Bool.false )]
+    #res = checkMatching (Str.toUtf8  "a" )  [(createToken  ( Character 'a' )  Once Bool.false )]
     
-    #ress =
-    #    when parseStr "a" "[a-g]"  is 
-    #        Ok parsed ->
-    #            dbg parsed.captured
+    res =
+        when parseStr "a" "[a-g]"  is 
+            Ok parsed ->
+                dbg parsed.captured
                 
-    #            Ok parsed.result 
-    #        Err mes -> Err mes
-    #dbg  res
+                Ok parsed.result 
+            Err mes -> Err mes
+    dbg  res
 
     Stdout.line "outStr"
 
@@ -1581,7 +1600,7 @@ expect
         Err mes -> mes == "test repetition range matching"  
          
 expect        
-    when parseStr "a" "[a-g]" is 
+    when parseStr "dad" "d[a-g]d" is 
         Ok parsed ->
             parsed.result == Bool.true
         Err mes -> mes == "test one of matching"  
@@ -1591,6 +1610,42 @@ expect
         Ok parsed ->
             parsed.result == Bool.false
         Err mes -> mes == "test one of matching"  
+expect        
+    when parseStr "a6a" "a[a-g1-7]a" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test one of matching" 
+        
+expect        
+    when parseStr "a8a" "a[a-g1-7]a" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test one of matching" 
+        
+expect        
+    when parseStr "zcz" "z[abcd]z" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test one of matching" 
+        
+expect        
+    when parseStr "zfz" "z[abcd]z" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test one of matching" 
+        
+expect        
+    when parseStr "z*z" "z[\\*\\?\\{]z" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test one of matching" 
+        
+expect        
+    when parseStr "z^z" "z[\\*\\?\\{]z" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test one of matching" 
+        
 # more  complex  test
 
 
