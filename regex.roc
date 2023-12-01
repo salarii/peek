@@ -84,45 +84,16 @@ treeBase =
     {cnt : 0, content : Dict.empty {} }
     |> addElement  0 emptyNode
     
-createParsingRecord = \ regex, meta ->
-    # workaround: I haven't predicted that this information will be needed.
-    # on earlier stages it would be cleaner (maybe)to extract this but not with this design
-    # I just missed that opportunity and now I don't want to rip through entire thing to make it right
-    stricSetting = 
-        when (List.first regex, List.last regex ) is
-            (Ok  (  tokenFirst) , Ok (  tokenLast) ) ->
-                when ( tokenFirst.token, tokenLast.token )  is 
-                    (Character  first,Character  last )  ->
-                        if first == '^' && last == '$' then
-                            { updatedRegex : 
-                                List.dropFirst regex 1
-                                |> List.dropLast 1,
-                                strict : Both }
-                        else
-                            { updatedRegex : regex, strict : No }          
-                    (Character  first, _) ->
-                        if first == '^'  then
-                            { updatedRegex : List.dropFirst regex 1, strict : Front }
-                        else
-                            { updatedRegex : regex, strict : No }    
-                        
-                    (_, Character  last) ->
-                        if last == '$'  then
-                            { updatedRegex : List.dropLast regex 1, strict : Back }
-                        else
-                            { updatedRegex : regex, strict : No }    
-                        
-                    _ -> 
-                        { updatedRegex : regex, strict : No }
-            _ ->  { updatedRegex : regex, strict : No }
-    
-    { regex : stricSetting.updatedRegex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : stricSetting.strict } 
+createParsingRecord = \ regex, meta, strict ->
+
+    { regex : regex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : strict }
 
 
 checkMatchingValidity = \ matchingResult ->
     when matchingResult.strict is 
         No -> Bool.true 
-        Front -> List.isEmpty  matchingResult.missed
+        Front ->
+            List.isEmpty  matchingResult.missed
         Back -> List.isEmpty  matchingResult.left 
         Both -> (List.isEmpty  matchingResult.missed) && (List.isEmpty  matchingResult.left)
 
@@ -252,6 +223,7 @@ checkMatching = \ utfLst, reg  ->
             _ -> NoMatch
 
     matchStr = \ utf, pattern ->
+
         checkRange = ( \ val, ranges -> 
                         List.walkUntil ranges Outside  (\ _state, elem ->
                             if val >= elem.left  && val <= elem.right then
@@ -343,7 +315,7 @@ checkMatching = \ utfLst, reg  ->
                                         List.walk  chains  state  (  \ inState, inChain  ->
                                             List.concat inChain changeFront
                                             |> (\ updatedCurrent ->  
-                                                    List.concat inState (updateRegexItemInternal [] {regItem & current : updatedCurrent, meta : Active} ))
+                                                    List.concat inState (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
                                             |> ( \ updatedState ->
                                                 List.concat inChain (List.dropFirst regItem.current 1)
                                                 |> (\ updatedCurrent ->  
@@ -353,7 +325,7 @@ checkMatching = \ utfLst, reg  ->
                                         List.walk  chains  state  (  \ inState, inChain  ->
                                             List.concat inState
                                                 (List.concat inChain  regItem.current
-                                                |> (\ updatedCurrent -> ( updateRegexItemInternal [] {regItem & current : updatedCurrent, meta : Active} )))
+                                                |> (\ updatedCurrent -> ( updateRegexItemInternal [] {regItem & current : updatedCurrent} )))
                                         )
                                         |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                     
@@ -377,7 +349,7 @@ checkMatching = \ utfLst, reg  ->
                                             List.walk  chains  state  (  \ inState, inChain  -> 
                                                 List.concat inChain changeFront
                                                 |> (\ updatedCurrent ->  
-                                                    List.concat inState (updateRegexItemInternal [] {regItem & current : updatedCurrent, meta : Active} ))
+                                                    List.concat inState (updateRegexItemInternal [] {regItem & current : updatedCurrent} ))
                                             )   
                                             |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                 
@@ -401,14 +373,14 @@ checkMatching = \ utfLst, reg  ->
                                             |> List.prepend { pat & serie : ZeroOrMore }
                                             
                                         List.concat [{pat & serie : Once}] changeFront
-                                        |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent, meta : Active} )  
+                                        |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
                                         |> ( \ updatedState ->
                                             List.concat [{pat & serie : Once}] (List.dropFirst regItem.current 1)
                                             |> (\ updatedCurrent ->  List.append updatedState {regItem & current : updatedCurrent} ))
                                     ZeroOrMore ->
                                         List.append state
                                             (List.concat [{pat & serie : Once}]  regItem.current 
-                                            |> (\ updatedCurrent ->  {regItem & current : updatedCurrent, meta : Active} ))
+                                            |> (\ updatedCurrent ->  {regItem & current : updatedCurrent} ))
                                     
                                         |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                     
@@ -428,7 +400,7 @@ checkMatching = \ utfLst, reg  ->
                                                 |> List.prepend { pat & serie : NoMorethan (cnt - 1) }
                                                 
                                             List.concat [{pat & serie : Once}] changeFront
-                                            |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent, meta : Active} )  
+                                            |> (\ updatedCurrent ->  List.append state {regItem & current : updatedCurrent} )  
                                             |> List.concat  ( updateRegexItemInternal [] {regItem & current : (List.dropFirst regItem.current 1)} )
                                 
                                     NTimes cnt ->
@@ -459,12 +431,12 @@ checkMatching = \ utfLst, reg  ->
             Ok pat -> 
                 Old state
             Err _ ->  
-                if state.meta == Origin then
+                # if state.meta == Origin then
                     # BUG  in this  line
                     # getFirstPat  { state & current : state.regex } 
-                    New { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed, left : state.left, captured : state.captured, meta : state.meta, strict : state.strict } 
-                else 
-                    New {state & meta : Inactive }  )
+                #    New { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed, left : state.left, captured : state.captured, meta : state.meta, strict : state.strict } 
+                # else 
+                New {state & meta : Inactive }  )
             
             
     checkLastListEmpty = (\ listOfLists  ->
@@ -475,11 +447,46 @@ checkMatching = \ utfLst, reg  ->
                     Bool.false  
     
         )
+    # workaround: I haven't predicted that this information will be needed.
+    # on earlier stages it would be cleaner (maybe)to extract this but not with this design
+    # I just missed that opportunity and now I don't want to rip through entire thing to make it right
+    regexStartEndSetting = 
+        when (List.first reg, List.last reg ) is
+            (Ok  (  tokenFirst) , Ok (  tokenLast) ) ->
+                when ( tokenFirst.token, tokenLast.token )  is 
+                    (Character  first,Character  last )  ->
+                        if first == '^' && last == '$' then
+                            { updatedRegex : 
+                                List.dropFirst reg 1
+                                |> List.dropLast 1,
+                                strict : Both }
+                        else if first == '^'  then
+                            { updatedRegex : List.dropFirst reg 1, strict : Front }
+                        else if last == '$'  then
+                            { updatedRegex : List.dropLast reg 1, strict : Back } 
+                        else
+                            { updatedRegex : reg, strict : No }          
+                    (Character  first, _) ->
+                        if first == '^'  then 
+                            { updatedRegex : List.dropFirst reg 1, strict : Front }
+                        else
+                            { updatedRegex : reg, strict : No }    
+                        
+                    (_, Character  last) ->
+                        if last == '$'  then
+                            { updatedRegex : List.dropLast reg 1, strict : Back }
+                        else
+                            { updatedRegex : reg, strict : No }    
+                        
+                    _ -> 
+                        { updatedRegex : reg, strict : No }
+            _ ->  { updatedRegex : reg, strict : No }
+    
 
     complexSearch = 
-        List.walk utfLst [createParsingRecord reg Origin]  ( \ outState, utf ->
+        List.walk utfLst { missed : [] , parsing : [createParsingRecord regexStartEndSetting.updatedRegex Active  regexStartEndSetting.strict]}  ( \ outState, utf ->
             
-            updatedStates = updateRegex outState 
+            updatedStates = updateRegex outState.parsing 
             List.walk updatedStates [] ( \ state, processedReg ->   
                 
                 # it is  stupid  but without  this line it is crashing
@@ -527,28 +534,31 @@ checkMatching = \ utfLst, reg  ->
                                                         List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture} 
                                                     New newState ->  List.append curState  newState
                                         NoMatch _ ->
-
-                                                updateMissed = 
-                                                    List.concat updatedState.missed  updatedState.matched
-                                                    |> List.append  utf
-
-                                                # BUG this line 
-                                                #List.append curState { updatedState &  matched : [], current : updatedState.regex, missed : List.append updateMissed utf, left : [], captured : treeBase}
-                                                List.append curState { regex : updatedState.regex, current : updatedState.regex, matched : [], result : updatedState.result, missed : updateMissed, left : updatedState.left, captured : treeBase, meta : updatedState.meta, strict : updatedState.strict }
-                                                
+                                                curState
+                                             
                                         _ -> curState  
                                 )
-                    manageIteration processedReg state ) 
+                    manageIteration processedReg state )
+                    |> ( \ parsingSet  -> 
+                        updatedMissed = List.append outState.missed utf
+                        parsingState = createParsingRecord regexStartEndSetting.updatedRegex Active  regexStartEndSetting.strict
+                        { missed : updatedMissed,
+                        parsing : List.append  parsingSet { parsingState & missed : updatedMissed}  } )
+                     
         )
-    List.walk complexSearch  (createParsingRecord reg Inactive) ( \ state, parsResult -> 
+    List.walk complexSearch.parsing  (createParsingRecord reg Inactive  No) ( \ state, parsResult -> 
 
+                
+        updatedParsResult  =  { parsResult &  result :(checkMatchingValidity parsResult) && parsResult.result  }  
+        
         if state.result == Bool.true then
-            if (List.len parsResult.matched > List.len state.matched ) && (checkMatchingValidity state) then 
-                parsResult
+            if List.len updatedParsResult.matched > List.len state.matched  then 
+
+                updatedParsResult
             else 
                 state
         else 
-            parsResult )
+            updatedParsResult )
     
 getRegexTokens = \ result  -> 
     when result.tag is 
@@ -1188,18 +1198,18 @@ parseStr = \ str, pattern ->
 
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
-
+                    
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
                     # for now get longest maybe??
-                    Ok (List.walk independentChainlst (createParsingRecord [] Inactive)  ( \ state, regexParser ->  
+                    Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
                         parsResult = checkMatching (Str.toUtf8  str ) regexParser    
                         if state.result == Bool.true then
                             if List.len parsResult.matched > List.len state.matched  then 
                                 parsResult
                             else 
                                 state
-                            else 
-                                parsResult ))
+                        else 
+                            parsResult ))
                 Err message -> 
                     Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
 
@@ -1250,11 +1260,10 @@ main =
     #res = checkMatching (Str.toUtf8  "a" )  [(createToken  ( Character 'a' )  Once Bool.false )]
     
     res =
-        when parseStr "abgd" "[a-g]d" is 
+        when parseStr "ffggabcdefgh" "^abc" is 
             Ok parsed ->
-                dbg parsed.captured
-                parsed.result == Bool.true
-            Err mes -> mes == "test except of matching" 
+                parsed.result == Bool.false
+            Err mes -> mes == "test start end matching" 
     dbg  res
 
     Stdout.line "outStr"
@@ -1298,6 +1307,12 @@ expect
         Ok parsed ->
             parsed.result == Bool.false
         Err mes -> mes == "test characters matching"
+
+expect
+    when parseStr "aaaabcc" "abc" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test characters matching"  
         
 expect
     when parseStr "aaaabbcabcadsa" "abc" is 
@@ -1722,6 +1737,57 @@ expect
             parsed.result == Bool.true
         Err mes -> mes == "test one of matching" 
         
+expect        
+    when parseStr "abcdefgh" "^abc" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test start end matching"     
+        
+expect        
+    when parseStr "ffggabcdefgh" "^abc" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test start end matching"  
+        
+expect        
+    when parseStr "aabc" "abc$" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test start end matching"     
+        
+        
+expect        
+    when parseStr "ffggabcde" "abc$" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test start end matching"   
+        
+
+expect        
+    when parseStr "abc" "^abc$" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test start end matching"  
+        
+expect        
+    when parseStr "aabc" "^abc$" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test start end matching"     
+        
+        
+expect        
+    when parseStr "abcde" "^abc$" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test start end matching"
+        
+expect        
+    when parseStr "ffggabcdeabc" "^abc|abc$" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test start end matching"  
+          
 # more  complex  test
 
 
