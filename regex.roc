@@ -276,6 +276,7 @@ checkMatching = \ utfLst, reg  ->
             _ -> NoMatch
     
     matchUtf = ( \ utf, tokenMeta ->
+
         #dbg "check  matching"
         #dbg  Str.fromUtf8 [utf]
         #dbg printMe [tokenMeta]
@@ -361,9 +362,9 @@ checkMatching = \ utfLst, reg  ->
                                         )
                                     Once ->
                                         List.walk  chains  state  (  \ inState, inChain  ->
-                                            List.concat chain (List.dropFirst regItem.current 1)
+                                            List.concat inChain (List.dropFirst regItem.current 1)
                                             |> (\ updatedCurrent ->  
-                                                List.concat state (updateRegexItemInternal [] {regItem & current : updatedCurrent}) )  
+                                                List.concat inState (updateRegexItemInternal [] {regItem & current : updatedCurrent}) )  
                                         )
                             _ -> 
                                 when pat.serie is 
@@ -1259,11 +1260,11 @@ main =
     #res = checkMatching (Str.toUtf8  "[a-g]" )  pat
     #res = checkMatching (Str.toUtf8  "a" )  [(createToken  ( Character 'a' )  Once Bool.false )]
     
-    res =
-        when parseStr "ffggabcdefgh" "^abc" is 
+    res =      
+        when parseStr "asfgsdgaaccaaaa" "aa(bb|cc)aa" is 
             Ok parsed ->
-                parsed.result == Bool.false
-            Err mes -> mes == "test start end matching" 
+                parsed.result == Bool.true
+            Err mes -> mes == "test separator matching" 
     dbg  res
 
     Stdout.line "outStr"
@@ -1788,12 +1789,41 @@ expect
             parsed.result == Bool.true
         Err mes -> mes == "test start end matching"  
           
+expect        
+    when parseStr "ffggaaxyzbc" "abc|axyz|jjjj" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test separator matching"  
+          
+expect        
+    when parseStr "ffggjjjjzbc" "abc|axyz|jjjj" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test separator matching"  
+          
+expect        
+    when parseStr "ffggjjjzbc" "abc|axyz|jjjj" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test separator matching"  
+          
+expect        
+    when parseStr "aaaccaaaa" "aa(bb|cc)aa" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test separator matching"  
+          
+expect        
+    when parseStr "aaacccaaaa" "aa(bb|cc)aa" is 
+        Ok parsed ->
+            parsed.result == Bool.false
+        Err mes -> mes == "test separator matching"  
+          
 # more  complex  test
 
-
- 
-    
-                
+#for now I consider research phase as done , I should move to stabilisation phase now
+#but I will postpone this a bit. 
+#so in near future, I need to do type annotations and conduct fair bit of more comprehensive testing   
 
     
     
