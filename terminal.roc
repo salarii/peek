@@ -9,6 +9,8 @@ app "native-tui"
         pf.Sleep,
         pf.Tty,
         pf.Task.{ Task },
+        Regex,
+        Utils,
     ]
     provides [main] to pf
 
@@ -19,66 +21,115 @@ app "native-tui"
 main = Task.onErr terminal \_ -> crash "unknown problem"
 
 LineState : {
-    content : Str,
+    commandHistory : List (List U8),
+    historyCnt : I32,
+    content : List U8,
     cursor : { row : I32, col : I32 },
 }
 
-initPhrase : Str
-initPhrase = "something to it"
+
+content = "here  will be some  kind of text message \n\rasjeiogjaesiogjarodsgjoard\n\rjgoarjoegjsaemv.lsmndo\n\r"
+tail = "\n\n"
+
+initPhrase : List U8
+initPhrase = Str.toUtf8 ""
 
 init : LineState
 init = {
+    commandHistory : [],
+    historyCnt : 0,
     content : initPhrase,
-    cursor: { row: 1, col: Num.toI32 (Str.countUtf8Bytes initPhrase)},
+    cursor: { row: 1, col: 1},
 }
+
+addToHistoryList : List (List U8), List U8 -> List (List U8)
+addToHistoryList = \ historyLst, newItem -> 
+    List.walk historyLst [] ( \ state, item  ->
+        if item == newItem then
+            state
+        else
+            List.append state item
+    )
+    |> List.prepend  newItem
+
+injectString : List U8, List U8, I32 -> {composed : List U8,inJectedCnt : I32 } 
+injectString =  \ destStr, inStr, n -> 
+    List.split destStr (Num.toNat n)
+    |> (\ splited ->
+        composed = 
+            List.concat splited.before inStr
+            |> List.concat splited.others
+        { composed : composed, inJectedCnt : Num.toI32 (List.len inStr) } )   
+
+removeCharString : List U8, I32 ->  List U8 
+removeCharString =  \ destStr, n -> 
+    List.split destStr (Num.toNat n)
+    |> (\ splited ->
+        List.dropLast  splited.before  1
+        |> List.concat splited.others )
 
 terminal : Task {} *
 terminal =
     
     {} <- Tty.enableRawMode |> Task.await
 
-    _ <- Task.loop init (\state ->
+    {} <- Stdout.write  clearScreenPat |> Task.await
+    {} <- Stdout.write (cursorPosition init.cursor) |> Task.await
+    {} <- Stdout.write  content |> Task.await
+    {} <- Stdout.write  tail |> Task.await
+    {} <- Stdout.write  queryScreenPositionPat |> Task.await
+    cursorBytes <- Stdin.bytes |> Task.await
+    cursorPositionRes = queryPosition cursorBytes 
+    when cursorPositionRes is 
+            Ok cursor ->
+                _ <- Task.loop {init &  cursor : cursor } (\state ->
 
-        # Sleep to limit frame rate
-        {} <- Sleep.millis 50 |> Task.await
+                    # Sleep to limit frame rate
+                    {} <- Sleep.millis 50 |> Task.await
 
-        {} <- drawState state |> Task.await
+                    {} <- drawState state |> Task.await
+                    
+                    
+                    # Get user input
+                    bytes <- Stdin.bytes |> Task.await
+                    command = parseRawStdin bytes
 
-        
-        # Get user input
-        bytes <- Stdin.bytes |> Task.await
-        command = parseRawStdin bytes
+                    when command is 
+                        Shift direction -> 
 
-        when command is 
-            Shift direction -> 
-                Task.ok (Step (modifyCursor state direction))
-            Characters chars ->
-                Task.ok (Step (modifyLine state (Characters chars)))
-            RemoveLast ->
-                Task.ok (Step (modifyLine state RemoveLast))
-            ClearLine ->
-                Task.ok (Step (clearLine state))
-            Quit -> 
-                Task.ok (Done state)
-            Unsupported ->
+                            if (Num.toI32 (List.len state.content) < state.cursor.col && direction == (Right 1 )) ||
+                            ((direction == (Left 1 )) && state.cursor.col == 1 ) then
+                                Task.ok (Step state)
+                            else
+                                Task.ok (Step (modifyCursor state direction))
+                        Characters chars ->
+                            Task.ok (Step (modifyLine state (Characters chars)))
+                        RemoveLast ->
+                            Task.ok (Step (modifyLine state RemoveLast))
+                        ClearLine ->
+                            Task.ok (Step (clearLine state))
+                        Quit -> 
+                            Task.ok (Done state)
+                        Unsupported ->
 
-                # Clear the screen
-                {} <- Stdout.write  clearScreenPat |> Task.await
+                            # Clear the screen
+                            {} <- Stdout.write  clearScreenPat |> Task.await
 
-                dbg "problem"
-                dbg bytes
+                            dbg "problem"
+                            dbg bytes
 
-                Task.ok (Done state)
-            _ -> 
-                dbg "no t done yet"
-                Task.ok (Step state)
+                            Task.ok (Done state)
+                        _ -> 
+                            dbg "no t done yet"
+                            Task.ok (Step state)
 
-    ) |> Task.await
-    
-    # Disable raw mode
-    {} <- Tty.disableRawMode |> Task.await
+                ) |> Task.await
+                
+                # Disable raw mode
+                {} <- Tty.disableRawMode |> Task.await
 
-    Task.ok {}
+                Task.ok {}
+            Err _ -> Task.ok {}
 
 modifyCursor : LineState, Direction -> LineState
 modifyCursor = \state, direction ->
@@ -90,13 +141,14 @@ modifyCursor = \state, direction ->
                     col: state.cursor.col - val,
                 }
             }
-        Right val-> 
+        Right val->
             { state & 
                 cursor: {
                     row: state.cursor.row, 
                     col: state.cursor.col + val,
                 }
             }
+
         Begin ->
             { state & 
                 cursor: {
@@ -108,45 +160,62 @@ modifyCursor = \state, direction ->
             { state & 
                 cursor: {
                     row: state.cursor.row, 
-                    col: Num.toI32 (Str.countUtf8Bytes state.content)+1,
+                    col: Num.toI32 (List.len state.content)+1,
                 }
             }
 
 clearLine : LineState -> LineState
 clearLine = \state ->
+
+    updatedContent = 
+        List.split state.content (Num.toNat (state.cursor.col) - 1)
+        |> (\ splited ->
+            splited.others )
     { state & 
-        content: "" 
+        content: updatedContent
     }
     |> modifyCursor Begin
 
 modifyLine : LineState, [Characters (List U8),RemoveLast ] -> LineState
 modifyLine = \state, operation ->
-    dropLast = \ str ->
-        Str.toUtf8  str
-        |> List.dropLast 1
-        |> Str.fromUtf8  
-        |> Result.withDefault ""
     when operation is 
         Characters chars ->
+            injected = injectString state.content chars (state.cursor.col-1) 
             { state & 
-                content: Str.concat state.content  (Result.withDefault  (Str.fromUtf8  chars) "")  
+                content: injected.composed
             }
-            |> modifyCursor (Right (Num.toI32 (Str.countUtf8Bytes (Result.withDefault  (Str.fromUtf8  chars) ""))))
+            |> modifyCursor (Right injected.inJectedCnt )
         RemoveLast -> 
+            
             { state & 
-                content: dropLast state.content  
+                content: removeCharString state.content (state.cursor.col - 1)
             }
             |> modifyCursor (Left 1)
+
 
 drawState : LineState -> Task {} *
 drawState = \state ->
     #stuff  =
-    {} <- Stdout.write  clearScreenPat |> Task.await
-
     {} <- Stdout.write clearLinePat |> Task.await
     {} <- Stdout.write homeLinePat |> Task.await
-    {} <- Stdout.write state.content |> Task.await
+    {} <- Stdout.write (Result.withDefault (Str.fromUtf8 state.content ) "") |> Task.await
     Stdout.write (cursorPosition state.cursor)
+
+queryPosition : List U8 -> Result { row : I32, col : I32 }  Str
+queryPosition = \ consoleOut ->
+    position = Result.withDefault (Str.fromUtf8 (List.dropFirst consoleOut 1)) "" 
+    when Regex.parseStr position "(\\d+);(\\d+)R"  is
+        Ok parsed ->
+            when ((Regex.getValue [0] 0 parsed.captured),
+                 (Regex.getValue [1] 0 parsed.captured)) is
+                ( Ok rowStr, Ok colStr  )->
+                    Ok 
+                        {
+                            row : Utils.asciiArrayToNumber rowStr,
+                            col : Utils.asciiArrayToNumber colStr
+                        }
+                _ -> Err "can't parse cursor position"
+        Err  message -> Err message
 
 Direction : [Left I32, Right I32, Begin, End ]
 
@@ -162,11 +231,12 @@ Action : [
     Quit,
 ]
 
+queryScreenPositionPat = "\u(001b)[6n"
 clearScreenPat = "\u(001b)[2J"
 clearLinePat ="\u(001b)[2K" 
 homeLinePat  = "\u(001b)[0G"
 endLinePat  = "\u(001b)[K"
-#"\u001b[#{row};#{column}H"
+
 cursorPosition : {row: I32, col: I32} -> Str 
 cursorPosition = \{row, col} ->
     rowStr = row |> Num.toStr

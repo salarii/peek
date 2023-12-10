@@ -1,8 +1,14 @@
-    app "reg"
+interface Regex
+    exposes [parseStr,getValue ]
+    imports []
+    #packages { pf: "https://github.com/roc-lang/basic-cli/releases/download/0.5.0/Cufzl36_SnJ4QbOoEmiJ5dIpUxBvdB3NEySvuH82Wio.tar.br" }
+    #imports [pf.Stdout]
+    #provides [main] to pf
 
-    packages { pf: "https://github.com/roc-lang/basic-cli/releases/download/0.5.0/Cufzl36_SnJ4QbOoEmiJ5dIpUxBvdB3NEySvuH82Wio.tar.br" }
-    imports [pf.Stdout]
-    provides [main] to pf
+# known  issues 
+# Regex.parseStr "[1;16R" "(\\d+);(\\d+)"  - seems like this matches 1 and 1 istead of  1 16 
+
+
 
 # I highly prioritized implementation easiness over performance
 # this is questionable provided that peek may use matching in extensive way 
@@ -930,10 +936,10 @@ getValue = \ indices, parentId, tree ->
                                 getDirectly tree childIdx
                             else
                                 getValue (List.dropFirst indices 1) childIdx tree 
-                        Err _ -> Err  "no such value"                              
-                Err _ -> Err  "no such value"
+                        Err _ -> Err  "children missing"                              
+                Err _ -> Err  "parent node missing"
     
-        Err _ ->  Err  "no such value"
+        Err _ ->  Err  "provide ate least one indice"
      
 
 
@@ -1217,59 +1223,7 @@ parseStr = \ str, pattern ->
         Err message -> 
             Err  (Str.concat "This is internal regex error not your fault\n"  message )
 
-    
-main =
 
-
-    chainRange =
-        []
-        |> List.append  (createToken  CaptureOpen  Once Bool.false)
-        |> List.append  (createToken (Sequence [(createToken  Dot  Once Bool.false)] )  Once Bool.false)
-        |> List.append  (createToken  CaptureClose  Once Bool.false)
-        |> List.append  (createToken  ( Character '-' )  Once Bool.false )
-        |> List.append  (createToken  CaptureOpen  Once Bool.false)
-        |> List.append  (createToken (Sequence [(createToken  Dot  Once Bool.false)] )  Once Bool.false)
-        |> List.append  (createToken  CaptureClose  Once Bool.false)
-        
-    chainDot = 
-        []
-        |> List.append  (createToken  CaptureOpen  Once Bool.false)
-        |> List.append  (createToken (Sequence [(createToken  Dot  Once Bool.false)] )  Once Bool.false)
-        |> List.append  (createToken  CaptureClose  Once Bool.false)
-        
-    chainMain = 
-        []
-        |> List.append  (createToken  CaptureOpen  Once Bool.false)
-        |> List.append  (createToken (Sequence chainRange )  Once Bool.false)
-        |> List.append  (createToken  CaptureClose  Once Bool.false)
-        |> List.append  (createToken  Separator  Once Bool.false)
-        |> List.append  (createToken  CaptureOpen  Once Bool.false)
-        |> List.append  (createToken (Sequence chainDot )  Once Bool.false)
-        |> List.append  (createToken  CaptureClose  Once Bool.false)
-    
-    pat  =
-        []
-        |> List.append  (createToken  ( Character '[' )  Once Bool.false )
-        |> List.append  (createToken  CaptureOpen  Once Bool.false)
-        |> List.append  (createToken (Sequence  chainMain)  Once Bool.false) 
-        |> List.append  (createToken  CaptureClose  Once Bool.false)
-        |> List.append  (createToken  ( Character ']' )  Once Bool.false )
-     
-     
-    #dbg  printMe   pat
-    #res = checkMatching (Str.toUtf8  "[a-g]" )  pat
-    #res = checkMatching (Str.toUtf8  "a" )  [(createToken  ( Character 'a' )  Once Bool.false )]
-    
-    res =      
-        when parseStr "asfgsdgaaccaaaa" "aa(bb|cc)aa" is 
-            Ok parsed ->
-                parsed.result == Bool.true
-            Err mes -> mes == "test separator matching" 
-    dbg  res
-
-    Stdout.line "outStr"
-
-  
 
 SerieType a: [ AtLeastOne, ZeroOrMore, MNTimes a  a, NoMorethan a, NTimes a, Once ] where a implements Hash & Eq
 
