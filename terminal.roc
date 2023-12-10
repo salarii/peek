@@ -37,20 +37,40 @@ initPhrase = Str.toUtf8 ""
 init : LineState
 init = {
     commandHistory : [],
-    historyCnt : 0,
+    historyCnt : -1,
     content : initPhrase,
     cursor: { row: 1, col: 1},
 }
 
 addToHistoryList : List (List U8), List U8 -> List (List U8)
-addToHistoryList = \ historyLst, newItem -> 
-    List.walk historyLst [] ( \ state, item  ->
-        if item == newItem then
-            state
+addToHistoryList = \ historyLst, newItem ->
+    if List.len newItem > 0 then
+        List.walk historyLst [] ( \ state, item  ->
+            if item == newItem then
+                state
+            else
+                List.append state item
+        )
+        |> List.prepend  newItem
+    else
+        historyLst
+
+addToHistoryListNoAlter : List (List U8), List U8 -> List (List U8)
+addToHistoryListNoAlter = \ historyLst, newItem -> 
+    if List.len newItem > 0 then
+        insert =
+            List.walkUntil historyLst Bool.true ( \ state, item  ->
+                if item == newItem then
+                    Break Bool.false
+                else
+                    Continue state
+            )
+        if insert == Bool.true then 
+            List.prepend historyLst newItem
         else
-            List.append state item
-    )
-    |> List.prepend  newItem
+            historyLst 
+    else
+        historyLst
 
 injectString : List U8, List U8, I32 -> {composed : List U8,inJectedCnt : I32 } 
 injectString =  \ destStr, inStr, n -> 
@@ -108,6 +128,12 @@ terminal =
                             Task.ok (Step (modifyLine state RemoveLast))
                         ClearLine ->
                             Task.ok (Step (clearLine state))
+                        PreviousCommand ->
+                            Task.ok (Step (fromHistory state Previous))
+                        EnterCommand ->
+                            Task.ok (Step (enterHistory state))
+                        NextCommand ->
+                            Task.ok (Step (fromHistory state Next))
                         Quit -> 
                             Task.ok (Done state)
                         Unsupported ->
@@ -164,6 +190,58 @@ modifyCursor = \state, direction ->
                 }
             }
 
+enterHistory : LineState -> LineState
+enterHistory = \state ->
+    {
+        state &
+        content : [],
+        historyCnt:  -1,
+        commandHistory :
+            addToHistoryList state.commandHistory state.content,
+        cursor :  {row : state.cursor.row, col : 1 }
+    }
+
+fromHistory : LineState, [Previous,Next] -> LineState
+fromHistory = \state, order ->
+    length = Num.toI32 (List.len state.commandHistory)
+    if order == Previous && length - 1> state.historyCnt then 
+            List.get state.commandHistory (Num.toNat (state.historyCnt+1))
+            |>Result.withDefault  []
+            |> ( \ updatedContent -> 
+                {
+                    state &
+                    content : updatedContent,
+                    historyCnt:  state.historyCnt + 1,
+                    commandHistory :
+                        addToHistoryListNoAlter state.commandHistory state.content,
+                    cursor :  {row : state.cursor.row, col : Num.toI32 (List.len updatedContent ) + 1 }
+                })
+    else if order == Next && state.historyCnt >= 0 then
+            if state.historyCnt == 0 then 
+
+                {
+                        state &
+                        content : [],
+                        historyCnt:   -1,
+                        commandHistory :
+                            addToHistoryListNoAlter state.commandHistory state.content,
+                        cursor :  {row : state.cursor.row, col : 0 }
+                }
+            else
+                List.get state.commandHistory (Num.toNat (state.historyCnt-1))
+                |>Result.withDefault  []
+                |> ( \ updatedContent -> 
+                    {
+                        state &
+                        content : updatedContent,
+                        historyCnt:  state.historyCnt - 1,
+                        commandHistory :
+                            addToHistoryListNoAlter state.commandHistory state.content,
+                        cursor :  {row : state.cursor.row, col : Num.toI32 (List.len updatedContent ) + 1 }
+                    })
+    else 
+        state
+
 clearLine : LineState -> LineState
 clearLine = \state ->
 
@@ -211,8 +289,8 @@ queryPosition = \ consoleOut ->
                 ( Ok rowStr, Ok colStr  )->
                     Ok 
                         {
-                            row : Utils.asciiArrayToNumber rowStr,
-                            col : Utils.asciiArrayToNumber colStr
+                            row : Utils.asciiArrayToNumber rowStr Str.toI32,
+                            col : Utils.asciiArrayToNumber colStr Str.toI32
                         }
                 _ -> Err "can't parse cursor position"
         Err  message -> Err message
@@ -260,16 +338,12 @@ parseRawStdin = \bytes ->
         [27, 91, 66, ..] -> NextCommand
         [27, 91, 67, ..] -> Shift (Right 1)
         [27, 91, 68, ..] -> Shift (Left 1)
-        [8, ..] | [127, ..] -> 
-            RemoveLast
-        [21, ..] -> 
-            ClearLine
-        [27, 91, 72,..] -> 
-            Shift Begin
-        [27, 91, 70,..] -> 
-            Shift End
-        [27, val, cal,  ..] ->
-            Quit
+        [8, ..] | [127, ..] -> RemoveLast
+        [21, ..] -> ClearLine
+        [13, ..] -> EnterCommand
+        [27, 91, 72,..] -> Shift Begin
+        [27, 91, 70,..] -> Shift End 
+        [27, val, cal,  ..] -> Quit
         [3, ..] -> Quit
         other -> 
             Characters other
