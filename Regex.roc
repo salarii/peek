@@ -76,13 +76,11 @@ priorities =
     |> Dict.insert RangeRepetition 2
     |> Dict.insert Except 3
     
+charToUtf : Str -> U8
 charToUtf = \ char ->
     Str.toUtf8 char
     |> List.first
-    |> ( \ res ->
-        when res is 
-            Ok utf8 -> utf8
-            Err _ -> 0  )
+    |> Result.withDefault 0
 
 emptyNode = { locked : Bool.false, children :  [], value : [] }
 
@@ -91,7 +89,6 @@ treeBase =
     |> addElement  0 emptyNode
     
 createParsingRecord = \ regex, meta, strict ->
-
     { regex : regex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : strict }
 
 
@@ -152,24 +149,7 @@ splitChainOnSeparators = \ chain, inputLst ->
                             List.append state lst
                         )
                         |>   List.append []
-                #Sequence  inChain ->
 
-                #    partialSeqResult =
-                #        List.walk ( splitChainOnSeparators inChain []) [] ( \ outState, frontLst ->                               
-                            
-                #            List.walk ( splitChainOnSeparators (List.dropFirst chain 1) []) outState ( \ state, lst ->                                
-                #                List.append state  ( List.concat [ {elem & token : Sequence frontLst } ]  lst) 
-                #            )        
-                #        )   
-          
-                #    when List.last partialSeqResult is
-                #        Ok activElem ->
-                #            List.dropLast partialSeqResult 1
-                #            |> List.walk  [] ( \ state,  lst ->
-                #                List.append state (List.concat inputLst lst))
-                #            |> List.append  activElem
-                #        Err _ ->
-                #            []
                      
                 _ ->
 

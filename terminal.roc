@@ -1,7 +1,6 @@
-app "native-tui"
+app "terminal"
     packages {
         pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br"
-        #pf: "../basic-cli/src/main.roc",
     }
     imports [
         pf.Stdout,
@@ -13,10 +12,6 @@ app "native-tui"
         Utils,
     ]
     provides [main] to pf
-
- #   "\u(001b)[\(rowStr);\(colStr)H"
-# # Query cursor position
-# echo -en "\033[6n"
 
 main = Task.onErr terminal \_ -> crash "unknown problem"
 
