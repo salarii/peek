@@ -1,29 +1,52 @@
-interface Regex
-    exposes [parseStr,getValue ]
-    imports []
-    #packages { pf: "https://github.com/roc-lang/basic-cli/releases/download/0.5.0/Cufzl36_SnJ4QbOoEmiJ5dIpUxBvdB3NEySvuH82Wio.tar.br" }
-    #imports [pf.Stdout]
-    #provides [main] to pf
-
-# known  issues 
-# Regex.parseStr "[1;16R" "(\\d+);(\\d+)"  - seems like this matches 1 and 1 istead of  1 16 
-
-
-
-# I highly prioritized implementation easiness over performance
-# this is questionable provided that peek may use matching in extensive way 
-# This choice saves mental effort and makes this work possible to be completed 
-# I plan to add other means, to enable peek user to be relatively effective time wise anyway 
-
-# I was not interested to recreate regex with all it potential and pitfalls 
-# what I want is to make it work for 99% use cases( real life scenarios )
+app "command"
+    packages {
+        pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br"
+    }
+    #exposes []
+    imports [
+        pf.Stdout,
+        pf.Stdin,
+        Regex,
+    ]
+    provides [main] to pf
 
 
-# side note:
-# dbg crashing left and right on many complex objects
-# I need to run it after some time, with many dbg commands put all over the place,
-# to verify improvements
+RecoverRegexTagsType : [ Empty, Character, Dot, CaptureOpen, CaptureClose, AtLeastOne, ZeroOrMore, 
+    Optional, Separator, Digit, NoDigit, Alphanumeric,NoAlphanumeric,
+    Whitespace, NoWhitespace, BackSlash, Repetition, RangeRepetition, Except, Only]
 
+
+TokenPerRegexType : {tag : RecoverRegexTagsType, tokens : List TokenType} 
+
+RecoverPatternType : { tag : RecoverRegexTagsType, str : Str }
+
+TreeNodeType : {locked : Bool, children : List I32, value : List U8}
+
+TreeType : { cnt : I32, content : Dict I32  TreeNodeType }
+
+
+
+SerieType : [ AtLeastOne, ZeroOrMore, MNTimes I32 I32, NoMorethan I32, NTimes I32, Once ] 
+
+MetaType :  [Inactive, Active]
+
+StrictType : [ No, Front, Back, Both ]
+
+SearchRegexTagsType : [ Dot, CaptureClose, CaptureOpen, ReverseLimitRanges ( List { left : U8, right : U8 } ),
+            Separator,  CharacterSet (List U8), NotInCharacterSet (List U8), 
+            Except (List (SearchRegexTagsType)), Character U8, Digit, NoDigit, LimitRanges ( List { left : U8, right : U8 } ),
+            Sequence (List  { token :SearchRegexTagsType, serie : SerieType , capture : Bool  } ) ]  
+
+
+TokenType : { token :SearchRegexTagsType , serie : SerieType , capture : Bool  }
+
+
+ParsingResultType : { regex : List TokenType, current : List TokenType, matched : List U8, result : Bool,
+                missed : List U8, left : List U8, captured : TreeType, meta : MetaType, strict : StrictType }
+
+
+
+firstStagePatterns :  List  RecoverPatternType
 firstStagePatterns = [
         { tag : Dot, str : "."},
         { tag : CaptureOpen, str : "("},
@@ -38,21 +61,21 @@ firstStagePatterns = [
         { tag : NoAlphanumeric, str : "\\W" },
         { tag : Whitespace, str : "\\s" },
         { tag : NoWhitespace, str : "\\S" }]
-        
-# second  stage  patterns
-# temporary Only
+
+aux1Patt : Str
 aux1Patt =  "T(((.+)))T"
 
-
+secondStagePatterns: List  RecoverPatternType
 secondStagePatterns =  [
-    { tag : BackSlash, str : "\\T.?{}^*T" },  # " 
+    { tag : BackSlash, str : "\\T.?{}^*T" },  # " #<- this artifact is serves for visual studio code 
     { tag : Repetition, str : "{(\\d)+}"},   #"   
-    { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, # "
-    { tag : Except, str : "[^(((.)-(.))|((.))|((\\T.?{}^*T)))+]" }, # "
-    { tag : Only, str : "[(((.)-(.))|((.))|((\\T.?{}^*T)))+]" } # "
+    { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, #"
+    { tag : Except, str : "[^(((.)-(.))|((.))|((\\T.?{}^*T)))+]" }, #"
+    { tag : Only, str : "[(((.)-(.))|((.))|((\\T.?{}^*T)))+]" } #"
     ]  # "
-        
 
+    
+priorities : Dict  RecoverRegexTagsType (Num a)    
 priorities =
     Dict.empty {}
     |> Dict.insert Empty -1
@@ -75,36 +98,10 @@ priorities =
     |> Dict.insert Repetition 2   
     |> Dict.insert RangeRepetition 2
     |> Dict.insert Except 3
-    
-charToUtf : Str -> U8
-charToUtf = \ char ->
-    Str.toUtf8 char
-    |> List.first
-    |> Result.withDefault 0
-
-emptyNode = { locked : Bool.false, children :  [], value : [] }
-
-treeBase = 
-    {cnt : 0, content : Dict.empty {} }
-    |> addElement  0 emptyNode
-    
-createParsingRecord = \ regex, meta, strict ->
-    { regex : regex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : strict }
-
-
-checkMatchingValidity = \ matchingResult ->
-    when matchingResult.strict is 
-        No -> Bool.true 
-        Front ->
-            List.isEmpty  matchingResult.missed
-        Back -> List.isEmpty  matchingResult.left 
-        Both -> (List.isEmpty  matchingResult.missed) && (List.isEmpty  matchingResult.left)
-
-modifyLastInList = \ lst, elem ->
-    List.dropLast lst 1
-    |> List.append elem
-
-
+  
+  
+  
+getPrioToken : List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} ->  Result {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} [Empty, NoTokens, PriorityListErr]
 getPrioToken = \ patterns ->
     if List.isEmpty patterns then
         Err NoTokens
@@ -127,32 +124,147 @@ getPrioToken = \ patterns ->
                                         state
                                 Err _ -> Err PriorityListErr 
                         Err _ -> Err PriorityListErr
-                Err message -> Err message 
+                Err message -> Err message   
         )
+        
+    
+charToUtf : Str -> U8
+charToUtf = \ char ->
+    Str.toUtf8 char
+    |> List.first
+    |> Result.withDefault 0
 
-# if  I try to  enable  types  there is  crash :(
-#createToken :  TagType  (U8) (Int b), SerieType (Int b), Bool -> TokenType (U8) (Int b) where a implements Hash & Eq, b implements Hash & Eq
+emptyNode : TreeNodeType
+emptyNode = { locked : Bool.false, children :  [], value : [] }
+
+treeBase : TreeType
+treeBase = 
+    {cnt : 0, content : Dict.empty {} }
+    |> addElement  0 emptyNode
+
+changeValue : TreeType, I32, U8 ->  TreeType
+changeValue = \ tree, id, value-> 
+    modify = 
+        \ idValue, treeValue ->
+            when Dict.get treeValue.content idValue is 
+                Ok node ->
+                    Ok (changeElement treeValue idValue {node & value : List.append node.value value  } )
+                Err _ -> Err  "internal logic error"
+
+    when modifyActive tree id modify is 
+        Ok newTree -> newTree
+        _ -> tree
+
+addElement : TreeType, I32, TreeNodeType ->  TreeType
+addElement = \ tree, parentId ,node -> 
+    when Dict.get tree.content parentId  is 
+        Ok element -> 
+            updatedContent = 
+                Dict.remove tree.content parentId
+                |> Dict.insert parentId {element  & children : (List.append element.children tree.cnt )}
+            
+            { cnt : tree.cnt + 1, content : (Dict.insert updatedContent  tree.cnt node )  }          
+        Err _ -> { cnt : tree.cnt + 1, content : Dict.insert tree.content  tree.cnt node }
+
+modifyActive : TreeType, I32, (I32, TreeType -> Result TreeType Str)  -> Result  TreeType  Str 
+modifyActive = \ tree, headId, op ->
+    when Dict.get tree.content headId  is 
+        Ok head -> 
+            if List.isEmpty head.children == Bool.true then
+                op headId tree
+            else 
+                when List.last head.children is 
+                    Ok nodeId ->
+                        when Dict.get tree.content nodeId is 
+                            Ok child ->
+                                if child.locked == Bool.true then
+                                    op headId tree
+                                else 
+                                    modifyActive tree nodeId op
+                            Err _ -> Err  "internal logic error"
+                    Err _ -> Err  "internal logic error"
+                        
+        Err _ -> Err  "wrong tree node id"
+
+
+changeElement : TreeType, I32, TreeNodeType ->  TreeType
+changeElement = \ tree, id ,node -> 
+    when Dict.get tree.content id  is 
+        Ok element -> 
+            updatedContent = 
+                Dict.remove tree.content id
+                |> Dict.insert id node
+            
+            { tree & content : updatedContent }          
+        Err _ -> { cnt : tree.cnt + 1, content : Dict.insert tree.content  tree.cnt node }
+    
+composeMatchedStructure :  TreeType, I32, [CaptureOpen, CaptureClose] -> TreeType 
+composeMatchedStructure = \ tree, id, tag ->
+    
+    addNewNode = \ idNew, treeNew -> Ok (addElement treeNew idNew emptyNode)
+    
+    lockNode = 
+        \ idLock, treeLocked ->
+            when Dict.get treeLocked.content idLock is 
+                Ok node ->
+                    Ok (changeElement treeLocked idLock {node & locked : Bool.true } )
+                Err _ -> Err  "internal logic error"
+    result = 
+        when tag is 
+            CaptureOpen -> 
+                if Dict.isEmpty tree.content == Bool.false then 
+                    modifyActive tree id addNewNode 
+                else
+                    Err  "internal logic error"
+            CaptureClose ->
+                modifyActive tree id lockNode
+    when result is
+        Ok newTree -> newTree
+        Err _  -> tree
+    
+getDirectly : TreeType, I32 -> Result (List U8)  Str
+getDirectly = \ tree, id  ->
+    when Dict.get tree.content id  is 
+        Ok node ->
+            Ok node.value  
+        Err _ -> Err  "no such value"
+
+getDirectlyChildrenCnt : TreeType, I32 -> Result (Nat)  Str
+getDirectlyChildrenCnt = \ tree, id  ->
+    when Dict.get tree.content id  is 
+        Ok node ->
+            Ok (List.len node.children )  
+        Err _ -> Err  "no such node"
+
+
+createParsingRecord : List TokenType, MetaType, StrictType -> ParsingResultType  
+createParsingRecord = \ regex, meta, strict ->
+    { regex : regex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : strict }
+
+createToken : SearchRegexTagsType, SerieType, Bool -> TokenType
 createToken = \ token, serie, capture ->
     { token :token, serie : serie, capture : capture  }
 
+regexSeedPattern : List ( TokenPerRegexType )
 regexSeedPattern = [
     { tag : Character, tokens : [ createToken  Dot  Once Bool.false ] } ]
 
-#  test  this, I could not figure  out  how to do this properly 
+modifyLastInList : List  a, a -> List  a
+modifyLastInList = \ lst, elem ->
+    List.dropLast lst 1
+    |> List.append elem
+
+splitChainOnSeparators : List TokenType,List TokenType -> List( List TokenType )
 splitChainOnSeparators = \ chain, inputLst ->
     when List.first chain is 
         Ok elem ->
             when elem.token is 
                 Separator -> 
-
                         List.walk ( splitChainOnSeparators (List.dropFirst chain 1) []) [] ( \ state, lst ->
                             List.append state lst
                         )
                         |>   List.append []
-
-                     
                 _ ->
-
                     partialResult =
                         List.walk ( splitChainOnSeparators (List.dropFirst chain 1) (List.append inputLst elem )) [] ( \ state, lst ->
                                 List.append state lst
@@ -162,14 +274,13 @@ splitChainOnSeparators = \ chain, inputLst ->
                         Ok lst -> 
                             modifyLastInList partialResult  (List.concat [elem] lst)  
                         Err _ -> 
-                            []
-                    
+                            []   
         Err _ ->
             [[]]
-        
 
-    
-evalRegex = \ utfLst, patterns, regex ->
+
+evalRegex : List U8, List TokenPerRegexType, List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType}  -> Result ( List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} ) [Empty, NoTokens, PriorityListErr]
+evalRegex = \ utfLst, patterns, regex ->    
     if List.isEmpty utfLst then
         Ok regex
     else
@@ -187,16 +298,9 @@ evalRegex = \ utfLst, patterns, regex ->
                 Ok token -> evalRegex token.parsedResult.left patterns  ( List.append regex token ) 
                 Err message ->  Err message  )
 
-checkMatching = \ utfLst, reg  ->
-    #matchStr : U8, TagType  ( Num a ) (Num  b)-> [NoMatch, Consume ] where a implements Hash & Eq, b implements Hash & Eq
-    matchStrBugPrevent = \ utf, pattern ->
-        checkRangeBug = ( \ val, ranges -> 
-                        List.walkUntil ranges Outside  (\ _state, elem ->
-                            if val >= elem.left  && val <= elem.right then
-                                Break Within
-                            else
-                                Continue Outside ))
-        
+
+checkMatching : List U8, List TokenType -> ParsingResultType
+checkMatching = \ utfLst, reg  -> 
         when pattern is 
             LimitRanges lst -> 
                 when checkRangeBug utf lst is 
@@ -246,7 +350,8 @@ checkMatching = \ utfLst, reg  ->
                 List.walkUntil tokens Consume ( \  state , token  ->
                 #  because below  crashes
                 #    when matchStr  utf  token is
-                    when matchStrBugPrevent  utf  token is
+                    when matchStr utf  token is
+                #    when matchStrBugPrevent  utf  token is
                         Consume -> Break  NoMatch
                         NoMatch -> Continue state 
                     ) 
@@ -262,10 +367,6 @@ checkMatching = \ utfLst, reg  ->
             _ -> NoMatch
     
     matchUtf = ( \ utf, tokenMeta ->
-
-        #dbg "check  matching"
-        #dbg  Str.fromUtf8 [utf]
-        #dbg printMe [tokenMeta]
         result = matchStr utf tokenMeta.token  
        
         when result is
@@ -469,7 +570,7 @@ checkMatching = \ utfLst, reg  ->
                         { updatedRegex : reg, strict : No }
             _ ->  { updatedRegex : reg, strict : No }
     
-
+    complexSearch : { missed : List U8,  parsing : List ParsingResultType } 
     complexSearch = 
         List.walk utfLst { missed : [] , parsing : [createParsingRecord regexStartEndSetting.updatedRegex Active  regexStartEndSetting.strict]}  ( \ outState, utf ->
             
@@ -477,7 +578,7 @@ checkMatching = \ utfLst, reg  ->
             List.walk updatedStates [] ( \ state, processedReg ->   
                 
                 # it is  stupid  but without  this line it is crashing
-                a  =  printMe  processedReg.regex
+                #a  =  printMe  processedReg.regex
                 
                 
                 if processedReg.result == Bool.true then
@@ -546,292 +647,8 @@ checkMatching = \ utfLst, reg  ->
                 state
         else 
             updatedParsResult )
-    
-getRegexTokens = \ result  -> 
-    when result.tag is 
-        Character-> 
-            when List.first result.parsedResult.matched is 
-                Ok  matched  -> 
-                    Ok [(createToken  ( Character matched )  Once Bool.false )]
-                Err  _  -> Err "character  tag problem"
-        _ -> 
-            Err "wrong tag"
 
-
- 
-
-regexCreationStage = \ inPatterns, ignitionPatterns ->
-
-    regPatterns = 
-        List.walk inPatterns (Ok []) ( \ state, pat->
-            when state is 
-                Ok patterns -> 
-                    when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
-                        Ok results ->
-                            
-                            List.walk  results (Ok []) ( \ inState, result ->
-                                when inState is 
-                                    Ok patLst ->
-                                        when  getRegexTokens result is 
-                                            Ok tokens -> 
-                                                workaround = 
-                                                    List.walk  tokens [] ( \ workState, token -> 
-                                                        List.append workState (createToken token.token token.serie  token.capture) )
-                                                # !!!!!!!!!!! crashes  here Ok [{ tag : pat.tag, tokens : tokens }]
-                                                Ok (List.concat patLst  workaround  )    
-
-                                            Err message -> Err message 
-                                    Err  message -> Err message     
-                                
-                            )
-                            |> (\ inTokensResult ->
-                                when  inTokensResult is 
-                                    Ok inTokens ->  
-                                        Ok ( List.append patterns { tag : pat.tag, tokens : inTokens } )
-                                    Err message ->  Err message )
-
-                        Err Empty ->  Err "Empty" 
-                        Err NoTokens ->  Err "NoTokens"
-                        Err PriorityListErr ->  Err "PriorityListErr"
-                Err message ->  Err message )
-    when regPatterns is 
-        Ok patterns ->
-            Ok  ( List.concat  ignitionPatterns  patterns )
-        Err  message  -> Err  message  
-    
-    
-stagesCreationRegex  = \ _param -> 
-    
-    # this is not really needed 
-    # all patterns could be placed in regexSeedPattern right out of the bat (in token form)
-    # but this approach has some benefits:
-    # - quite decent self validation during development
-    # - additional restrictions which limit unbounded sea of possibilities during design phase
-    # - patterns are easy to recognize from their's string form
-    stage1 = regexCreationStage firstStagePatterns regexSeedPattern
-    when stage1 is 
-        Ok stage1Pat ->
-            patternAux1Result = regexCreationStage2 aux1Patt stage1Pat  []
-            when patternAux1Result is 
-                Ok patternAux1 ->
-                    stage2Pat = List.append stage1Pat  { tag : Only, tokens : patternAux1 }
-
-                    List.walkUntil  secondStagePatterns (Ok stage1Pat) ( \ state, pat  ->
-                        when state is 
-                            Ok currentPatterns ->
-
-                                patternResult = regexCreationStage2 pat.str stage2Pat  []
-
-                                when patternResult is 
-                                    Ok pattern ->
-                                        Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
-                                    Err message -> Break (Err message)
-                            Err message -> Break (Err message)
-                    )
-                    
-                Err message -> Err message   
-
-        Err message -> Err message
-
-
-regexCreationStage2  = \ str, patterns, currReg ->
-    ( evalRegex (Str.toUtf8  str) patterns currReg )
-    |> ( \ resultSet -> 
-        when resultSet is
-            Ok  results ->
-                List.walk results (Ok { lst : [] , capture : 0 }) ( \ outState, result  ->
-                    when outState is 
-                        Err message -> Err message 
-                        Ok state ->
-                            doCapture = \ capture  ->
-                                capture > 0
-                            
-                            
-                            modifLastInChain = (\ chainLst, token ->
-                                when List.last chainLst is 
-                                    Ok elem ->
-                                        when elem.token is 
-                                            Sequence  chain ->
-                                                when List.last chain is
-                                                    Ok lastOnChain ->
-                                                        closeLast = (\  lst, seq ->
-                                                            Sequence  seqChain = seq  
-                                                            when List.last seqChain is
-                                                                Ok  item  -> 
-                                                                    when item.token is 
-                                                                        Sequence  inChain ->
-                                                                            modifyLastInList 
-                                                                                lst (createToken (Sequence (closeLast seqChain (Sequence  inChain) ))  Once Bool.false)     
-                                                                        _ ->
-                                                                            List.append lst token 
-                                                                Err _ ->     
-                                                                        lst
-                                                                        )
-                                                                    
-                                                            
-                                                        when token.token is 
-                                                            CaptureClose ->
-                                                                closeLast chainLst (Sequence chain) 
-                                                               # List.append chainLst token            
-                                                            _ -> 
-                                                                modifyLastInList chainLst (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
-
-                                                    Err _ ->
-                                                        modifyLastInList  chainLst  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
-                                            _ ->  
-                                                List.append chainLst token                  
-                                    Err _ ->
-                                        List.append chainLst token
-                                        
-                            )
-                            # those two functions below exist because of some failures in design
-                            createUpdatedToken = ( \ token, cnt, op,  tokens ->
-                                        when token is
-                                            Ok elem ->
-                                                when elem.token is
-                                                    Sequence chain ->
-                                                        createUpdatedToken  (List.last chain)  cnt op (List.append tokens elem)      
-                                                    _ ->
-                                                        List.append tokens elem
-                                                        |> List.dropLast cnt
-                                                        |> List.walkBackwards  (Err "internal error during  + evaluation ") (  \ createResult , elemToken   -> 
-                                                            when elemToken.token is
-                                                                Sequence chain ->
-                                                                    when chain is 
-                                                                        [.., elemChain ] ->
-                                                                            when createResult is 
-                                                                                Ok updatedToken ->
-                                                                                    Ok (createToken (Sequence (modifyLastInList chain updatedToken)) elemToken.serie elemToken.capture )
-                                                                                _ ->
-                                                                                    Ok ( op elemToken )
-                                                                        [] -> Err " wrong + usage "
-                                                                _->
-                                                                    Ok ( op elemToken ))
-                                               
-                                            Err  _ ->  Err " wrong + usage "
-                                    )
-                                    
-                            omitCaptureEnd = ( \ inLst, op, cnt -> 
-                                        when List.last inLst is
-                                            Ok elem ->
-                                                when elem.token is 
-                                                    CaptureClose ->
-                                                        when omitCaptureEnd ( List.dropLast inLst  1) op (cnt +1) is 
-                                                            Ok updatedLst ->
-                                                                Ok (
-                                                                    List.append updatedLst elem)
-                                                            Err message -> Err message 
-                                                    _ ->
-                                                        when  createUpdatedToken (Ok elem)  cnt op [] is
-                                                            Ok updatedLast ->  Ok ( modifyLastInList inLst updatedLast )
-                                                            Err  message -> Err  message  
-                                                        
-                                                
-                                            Err _ -> Err "Wrong usage of +/*/Repetition/? in pattern"        
-                                        )
-                 
-                            when  result.tag is 
-                                Character ->
-                                    when List.first result.parsedResult.matched is 
-                                        Ok  matched  ->
-                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character matched) Once (doCapture state.capture)) }
-                                        Err _ -> Err "parser  match problem"
-                                    
-                                Dot ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken Dot Once (doCapture state.capture) )  }
-                                CaptureOpen ->
-                                    
-                                    openLst = 
-                                        modifLastInChain state.lst (createToken CaptureOpen Once Bool.false)
-                                        |> modifLastInChain  (createToken (Sequence []) Once Bool.false)
-                                    Ok { lst : openLst, capture : state.capture + 1}
-                                CaptureClose ->
-                                    Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : state.capture - 1 }
-                                Separator -> 
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken Separator Once Bool.false )  }
-                                
-                                Digit ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken Digit Once (doCapture state.capture) )  }
-                                NoDigit ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken NoDigit Once (doCapture state.capture) )  }
-                                Alphanumeric ->
-                                    limitRangToken = LimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' },{ left : '_', right : '_' }]
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once (doCapture state.capture) )  }
-                                NoAlphanumeric ->
-                                    limitRangToken = ReverseLimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' },{ left : '_', right : '_' }]
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once (doCapture state.capture) )  }
-                                Whitespace ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
-                                NoWhitespace ->
-                                    Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
-                                Only -> 
-                                    when createOnlyOutOfTree result.parsedResult.captured is
-                                        Ok onlyToken -> 
-                                            Ok { state &  lst : modifLastInChain state.lst onlyToken }
-                                        Err message ->
-                                            Err message
-                                Except ->
-                                    when createExceptOutOfTree result.parsedResult.captured is
-                                        Ok exceptionToken ->
-                                            Ok { state &  lst : modifLastInChain state.lst exceptionToken }
-                                        Err message ->
-                                            Err message
-                                BackSlash->
-                                    when result.parsedResult.matched is 
-                                        [backslash, sign ] ->
-                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character sign) Once (doCapture state.capture)) }
-                                        _ -> Err "back slash parser  match problem"
-                                    
-                                Repetition ->
-                                    when createRepetitionOutOfTree result.parsedResult.captured is
-                                        Ok serie -> 
-                                            when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
-                                                Ok newLst ->
-                                                    Ok { state &  lst : newLst }
-                                                Err message -> Err message     
-                                        Err message ->
-                                            Err message  
-                                RangeRepetition ->
-
-                                    when createRepetitionOutOfTree result.parsedResult.captured is
-                                        Ok serie -> 
-                                            when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
-                                                Ok newLst ->
-                                                    Ok { state &  lst : newLst }
-                                                Err message -> Err message                                              
-                                        Err message ->
-                                            Err message 
-                                ZeroOrMore ->                                            
-                                    when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : ZeroOrMore } )  0 is 
-                                        Ok newLst ->
-                                            Ok { state &  lst : newLst }
-                                        Err message -> Err message  
-                                Optional ->
-                                     when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : (NoMorethan 1) } )  0 is 
-                                        Ok newLst ->
-                                            Ok { state &  lst : newLst }
-                                        Err message -> Err message  
-                                AtLeastOne ->
-                                    
-
-                                    when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : AtLeastOne } )  0 is 
-                                        Ok newLst ->
-                                            Ok { state &  lst : newLst }
-                                        Err message -> Err message  
-                     
-                                Empty -> Err "Empty"  
-                        )
-                |> (\ tokenLst -> 
-                    when tokenLst is 
-                        Ok lstRec ->
-                            Ok lstRec.lst
-                        Err message -> Err message  )
-                         
-            Err Empty ->  Err "Empty" 
-            Err NoTokens ->  Err "NoTokens"
-            Err PriorityListErr ->  Err "PriorityListErr"
-    )
-# dbg does not always  works so I  am using this : ) 
+printMe : List  TokenType -> Str
 printMe = (  \ arrayPrt ->
     List.walk arrayPrt "" (  \ inState , token ->
         when  token.token  is 
@@ -856,908 +673,27 @@ printMe = (  \ arrayPrt ->
                 Str.concat inState "\nseq : -> " 
                 |> Str.concat (printMe array)
                 |> Str.concat "\nexit sequence  <- "
-            AtLeastOne ->
-                Str.concat inState "\nAt least one"
-            Once -> Str.concat inState "\nOnce"
             Digit -> Str.concat inState "\nDigit"
-            BackSlash -> Str.concat inState "\nBackSlash"
             CharacterSet _ -> Str.concat inState "\nCharacter set"  
             LimitRanges _ -> Str.concat inState "\nLimit Ranges set"
             _ -> 
                 "\n unknown token "
         )
 )
+checkMatchingValidity : ParsingResultType -> Bool
+checkMatchingValidity = \ matchingResult ->
+    when matchingResult.strict is 
+        No -> Bool.true 
+        Front ->
+            List.isEmpty  matchingResult.missed
+        Back -> List.isEmpty  matchingResult.left 
+        Both -> (List.isEmpty  matchingResult.missed) && (List.isEmpty  matchingResult.left)
 
 
-addElement = \ tree, parentId ,node -> 
-    when Dict.get tree.content parentId  is 
-        Ok element -> 
-            updatedContent = 
-                Dict.remove tree.content parentId
-                |> Dict.insert parentId {element  & children : (List.append element.children tree.cnt )}
-            
-            { cnt : tree.cnt + 1, content : (Dict.insert updatedContent  tree.cnt node )  }          
-        Err _ -> { cnt : tree.cnt + 1, content : Dict.insert tree.content  tree.cnt node }
-    
-    
-changeElement = \ tree, id ,node -> 
-    when Dict.get tree.content id  is 
-        Ok element -> 
-            updatedContent = 
-                Dict.remove tree.content id
-                |> Dict.insert id node
-            
-            { tree & content : updatedContent }          
-        Err _ -> { cnt : tree.cnt + 1, content : Dict.insert tree.content  tree.cnt node }
-    
-
-getDirectly = \ tree, id  ->
-    when Dict.get tree.content id  is 
-        Ok node ->
-            Ok node.value  
-        Err _ -> Err  "no such value"
-
-getDirectlyChildrenCnt = \ tree, id  ->
-    when Dict.get tree.content id  is 
-        Ok node ->
-            Ok (List.len node.children )  
-        Err _ -> Err  "no such node"
-
-
-getValue = \ indices, parentId, tree ->
-     
-    when List.first indices is 
-        Ok indice -> 
-            when Dict.get tree.content parentId  is 
-                Ok node ->
-                    when List.get node.children indice is 
-                        Ok childIdx -> 
-                            if List.len indices == 1 then
-                                getDirectly tree childIdx
-                            else
-                                getValue (List.dropFirst indices 1) childIdx tree 
-                        Err _ -> Err  "children missing"                              
-                Err _ -> Err  "parent node missing"
-    
-        Err _ ->  Err  "provide ate least one indice"
-     
-
-
-modifyActive = \ tree, headId, op ->
-    when Dict.get tree.content headId  is 
-        Ok head -> 
-            if List.isEmpty head.children == Bool.true then
-                op headId tree
-            else 
-                when List.last head.children is 
-                    Ok nodeId ->
-                        when Dict.get tree.content nodeId is 
-                            Ok child ->
-                                if child.locked == Bool.true then
-                                    op headId tree
-                                else 
-                                    modifyActive tree nodeId op
-                            Err _ -> Err  "internal logic error"
-                    Err _ -> Err  "internal logic error"
-                        
-        Err _ -> Err  "wrong tree node id"
-
-
-changeValue = \ tree, id, value-> 
-    modify = 
-        \ idValue, treeValue ->
-            when Dict.get treeValue.content idValue is 
-                Ok node ->
-                    Ok (changeElement treeValue idValue {node & value : List.append node.value value  } )
-                Err _ -> Err  "internal logic error"
-
-    when modifyActive tree id modify is 
-        Ok newTree -> newTree
-        _ -> tree
-         
-
-seekInTreeOnlyExcept = ( \ head, tree, errMess -> 
-    List.walk head.children (Ok { characterSet : [], limitRanges : [] }) ( \ stateOutResult, topChildIdId ->
-        when Dict.get tree.content topChildIdId is
-            Ok childHead ->
-                childResult =
-                    List.walk childHead.children (Ok { characterSet : [], limitRanges : [] }) ( \ state, childId ->
-                        when state is 
-                            Ok items ->
-                                    
-                                when getDirectlyChildrenCnt tree childId is 
-                                    Ok  cnt ->
-                                            if cnt == 1 then 
-                                                when  (getValue [0] childId tree) is 
-                                                    Ok val -> 
-                                                        when val is 
-                                                            [ '\\', secVal ] ->
-                                                                Ok { items & characterSet :  List.append items.characterSet  secVal  }
-                                                            _ -> 
-                                                                Ok { items & characterSet :  List.concat items.characterSet  val  }
-                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value" )
-
-                                            else if cnt == 2 then
-                                                getFirst = (\  valLst ->
-                                                    when List.first valLst is 
-                                                        Ok val -> Ok val
-                                                        Err _ -> Err  "no value"
-                                                    )
-                                                                            
-                                                when (getValue [0] childId tree) is    
-                                                    Ok val1Lst -> 
-                                                        when getFirst val1Lst is
-                                                            Ok val1 ->
-                                                                when (getValue [1] childId tree)  is
-                                                                    Ok val2Lst ->
-                                                                        when getFirst val2Lst is
-                                                                            Ok val2 -> 
-                                                                                Ok { items & limitRanges :  List.append items.limitRanges  { left : val1, right : val2 } }
-                                                                                
-                                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
-                                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
-                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
-                                                            
-                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
-
-                                            else 
-                                                Err (Str.concat errMess "wrong second level child structure" )
-                                    Err _ -> Err (Str.concat errMess "wrong second level child structure" )
-                                        
-                            Err  message -> Err  message  
-                        )
-                when stateOutResult is 
-                    Ok stateOut ->
-                        when childResult is 
-                            Ok result ->
-                                Ok { characterSet : List.concat  result.characterSet stateOut.characterSet,
-                                limitRanges : List.concat result.limitRanges stateOut.limitRanges}        
-                            Err  message -> Err  message    
-                    Err  message -> Err  message         
-                
-            Err  _ -> Err (Str.concat errMess "wrong structure" )  
-            ))
-
-createExceptOutOfTree =  \ tree ->
-    errMess = "Except token problem:  "
-    when Dict.get tree.content 0  is 
-        Ok head ->
-            searchResult = seekInTreeOnlyExcept head tree errMess
-            when  searchResult is 
-                Ok search  ->
-                    if List.isEmpty search.characterSet == Bool.false &&
-                        List.isEmpty search.limitRanges == Bool.false then
-                        chain =
-                            []
-                            |> List.append (CharacterSet search.characterSet)
-                            |> List.append (LimitRanges search.limitRanges)
-                            
-                        Ok (createToken (Except  chain) Once Bool.false )
-            
-                    else if List.isEmpty search.characterSet == Bool.false then 
-                        Ok (createToken (Except [CharacterSet search.characterSet]) Once Bool.false ) 
-                    else if List.isEmpty search.limitRanges == Bool.false then
-                        Ok (createToken (Except [LimitRanges search.limitRanges]) Once Bool.false )
-                    else 
-                        Err (Str.concat errMess "empty tree") 
-                    
-                Err message -> Err message
-        Err _ -> Err  (Str.concat errMess "not right format of tree")
-
-
-createOnlyOutOfTree =  \ tree ->
-    errMess = "Only token problem:  "
-    when Dict.get tree.content 0  is 
-        Ok head ->
-            searchResult = seekInTreeOnlyExcept head tree errMess
-            when  searchResult is 
-                Ok search  ->
-                    if List.isEmpty search.characterSet == Bool.false &&
-                        List.isEmpty search.limitRanges == Bool.false then
-                        chain =
-                            []
-                            |> List.append (createToken CaptureOpen Once Bool.false )
-                            |> List.append (createToken (CharacterSet search.characterSet) Once Bool.false )
-                            |> List.append (createToken CaptureClose Once Bool.false )
-                            |> List.append (createToken Separator Once Bool.false )
-                            |> List.append (createToken CaptureOpen Once Bool.false )
-                            |> List.append (createToken (LimitRanges search.limitRanges) Once Bool.false )
-                            |> List.append (createToken CaptureClose Once Bool.false )
-                            
-                        Ok (createToken (Sequence  chain) Once Bool.false )
-        
-                    else if List.isEmpty search.characterSet == Bool.false then 
-                        Ok (createToken (CharacterSet search.characterSet) Once Bool.false ) 
-                    else if List.isEmpty search.limitRanges == Bool.false then
-                        Ok (createToken (LimitRanges search.limitRanges) Once Bool.false )
-                    else 
-                        Err (Str.concat errMess "empty tree") 
-                    
-                Err message -> Err message
-        Err _ -> Err  (Str.concat errMess "not right format of tree")
-                    
-                    
-                    
-createRepetitionOutOfTree =  \ tree ->
-    errMess = "Repetition token problem:  "
-    when Dict.get tree.content 0  is 
-        Ok head ->
-            searchResult = List.walkUntil head.children (Ok []) ( \ stateResult, childId ->
-                when  stateResult  is 
-                    Ok state ->
-
-                        when  (getDirectly tree childId ) is 
-                            Ok valLst ->
-                                when Str.fromUtf8 valLst is
-                                    Ok strVal ->
-                                        when Str.toU32 strVal  is 
-                                            Ok numVal ->
-                                                Continue (Ok  (List.append state  numVal) )
-                                            Err _ -> Break (Err (Str.concat errMess "wrong child structure, incompatible value" ))     
-                                    Err _ ->
-                                        Break (Err (Str.concat errMess "wrong child structure, incompatible value" ))                 
-            
-                            Err _ -> 
-                                Break (Err (Str.concat errMess "wrong child structure, missing value" ))
-                    Err message -> Break (Err message)
-                )
-                
-            when searchResult is 
-                Ok search ->
-                    when search is  
-                        [val] ->
-                            Ok ( NTimes val )
-                                        
-                        [val1, val2] ->
-                            if  val1 < val2  then 
-                                Ok (MNTimes val1  (val2 - val1) )
-                            else 
-                                Err  ( Str.concat errMess " first value greather than second " )
-                        _  ->  Err  ( Str.concat errMess "wrong structure" )
-                
-                Err message  -> Err message  
-        Err  _  ->  Err  ( Str.concat errMess " no values " )
-
-                    
-composeMatchedStructure = \ tree, id,tag ->
-    
-    addNewNode = \ idNew, treeNew -> Ok (addElement treeNew idNew emptyNode)
-    
-    lockNode = 
-        \ idLock, treeLocked ->
-            when Dict.get treeLocked.content idLock is 
-                Ok node ->
-                    Ok (changeElement treeLocked idLock {node & locked : Bool.true } )
-                Err _ -> Err  "internal logic error"
-    result = 
-        when tag is 
-            CaptureOpen -> 
-                if Dict.isEmpty tree.content == Bool.false then 
-                    modifyActive tree id addNewNode 
-                else
-                    Err  "internal logic error"
-            CaptureClose ->
-                modifyActive tree id lockNode
-    when result is
-        Ok newTree -> newTree
-        Err _  -> tree
-         
-    
-# tree used is  awkward consider  using  something along those  lines  in the future
-#modifyActive = \ op, currentStructHead  ->
-#    Node  head = currentStructHead
-#    updatedLst = 
-#        if List.isEmpty head.children == Bool.true then
-#            op head.children
-#        else 
-#            when List.last head.children is 
-#                Ok node ->
-#                    Node child = node 
-#                        if child.locked == Bool.true then
-#                            op head.children
-#                        else 
-#                            modifyLastInList head.children  (modifyActive op  node )                                   
-#                Err _ -> []           
-#    Node {head & children : updatedLst }
- 
- 
-
-#composeMatchedStructure = \ tag, currentStructHead -> 
-#    when tag is 
-#        CaptureOpen -> 
-#            modifyActive (\ lst -> List.append lst { locked : Bool.false, children : Children [], value : [] } ) currentStructHead
-#        CaptureClose ->
-#            modifyActive
-#                 (\ lst ->
-#                    when List.last lst is 
-#                        Ok elem ->
-#                            modifyLastInList lst { elem & locked : Bool.true} 
-#                        Err _ -> [] )
-#                 currentStructHead 
-
-availableRegex = stagesCreationRegex [] 
-
-parseStr = \ str, pattern -> 
-    
-    when availableRegex is 
-        Ok stage1Pat ->
-            tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
-
-            when tokensFromUserInputResult is 
-                Ok tokensFromUserInput ->
-                    
-                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
-                    # for now get longest maybe??
-                    Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
-                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
-                        if state.result == Bool.true then
-                            if List.len parsResult.matched > List.len state.matched  then 
-                                parsResult
-                            else 
-                                state
-                        else 
-                            parsResult ))
-                Err message -> 
-                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
-
-        Err message -> 
-            Err  (Str.concat "This is internal regex error not your fault\n"  message )
-
-
-
-SerieType a: [ AtLeastOne, ZeroOrMore, MNTimes a  a, NoMorethan a, NTimes a, Once ] where a implements Hash & Eq
-
-TokenType a b: { token :TagType a , serie : SerieType b, capture : Bool  } where a implements Hash & Eq, b implements Hash & Eq
-
-TagType a b : [ Dot, CaptureClose, CaptureOpen, ReverseLimitRanges ( List { left : b, right : b } ),
-            Separator,  CharacterSet (List a), NotInCharacterSet (List a), 
-            Except (List (TagType a b)), Character  a , Digit, NoDigit, LimitRanges ( List { left : b, right : b } ),
-            Sequence (List  { token :TagType a b, serie : SerieType b, capture : Bool  }) ]  where a implements Hash & Eq, b implements Hash & Eq
-
-#ArrayType : {values: List a ,branch : [Children arrayType] }
-#NodeType a  b :  { children : List (Num a), locked : Bool, value : List b} where a implements Hash & Eq
-#TreeType a: { cnt : Num a, content : Dict (Num a) { children : List (Num a)}  } where a implements Hash & Eq
-#createTreePattern : treeType, arrayType, (Num a) -> nodeType where a implements Hash & Eq
-#createTreePattern = \ tree, lst, parentId ->
-    #node  = { locked : Bool.true, children :  [], value : lst.values }
-    #updatedTree = addElement  tree parentId node 
-    #Children children = lst.branch
-    #createTreePattern updatedTree children tree.cnt
-            
+main = 
+    #Stdout.write  clearScreenPat |> Task.await
+    Stdout.write  "kapusta"
 
 
 
 
-#################### succeed/failed tests ####################
-    
-# rudimentary tests
-expect
-    when parseStr "a" "a" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test characters matching"
-               
-expect
-    when parseStr "b" "a" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test characters matching"
-
-expect
-    when parseStr "aaaabcc" "abc" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test characters matching"  
-        
-expect
-    when parseStr "aaaabbcabcadsa" "abc" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test characters matching"  
-        
-expect
-    when parseStr "aaaabcdfa" "abcdef" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test characters matching"
-        
-expect
-    when parseStr "aghdsad" "." is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test dot matching"
-        
-expect
-    when parseStr "agh" "...." is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test dot matching"
-        
-expect
-    when parseStr "abcd323sfsddgf" "\\d\\d\\d" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test digit matching"
-        
-expect
-    when parseStr "abcd32sfsddgf" "\\d\\d\\d" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test digit matching"
-        
-expect
-    when parseStr "24423abd45236436" "\\D\\D\\D" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test digit matching"
-        
-expect
-    when parseStr "24423ab3d45236436" "\\D\\D\\D" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test digit matching"
-        
-expect
-    when parseStr "24423...45236436" "\\.\\.\\." is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test period matching"
-        
-expect
-    when parseStr "24423..3d.45236436" "\\.\\.\\." is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test period matching"
-        
-expect
-    when parseStr "2A_d" "\\w\\w\\w\\w" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test alphanumeric matching"
-        
-expect
-    when parseStr "2A_]{d" "\\w\\w\\w\\w" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test alphanumeric matching"
-            
-expect
-    when parseStr "#@$a%^&*" "\\W\\W\\W\\W" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test non-alphanumeric matching"
-        
-expect
-    when parseStr "#@$a%^_&*" "\\W\\W\\W\\W" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test non-alphanumeric matching"    
-        
-expect
-    str = "  dd  \n\rdsda   d "
-    when parseStr str "\\s\\s\\s\\s" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test whitespaces matching"
-        
-expect
-    str = "  dd  \ndsda   d "
-    when parseStr str "\\s\\s\\s\\s" is 
-    Ok parsed ->
-        parsed.result == Bool.false
-    Err mes -> mes == "test whitespaces matching"
-        
-expect
-    str = "  dd  \n\rdsda   d "
-    when parseStr str "\\S\\S\\S\\S" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test non-whitespaces matching"
-        
-expect
-    str = "  dd  \ndsd\ra   d "
-    when parseStr str "\\S\\S\\S\\S" is 
-    Ok parsed ->
-        parsed.result == Bool.false
-    Err mes -> mes == "test non-whitespaces matching"  
-
-expect
-    when parseStr "abcd" "ab?c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test optional character matching"
-
-expect
-    when parseStr "acd" "ab?c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test optional character matching"
-
-expect        
-    when parseStr "abbcd" "ab?c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test optional character matching"
-
-expect
-    when parseStr "abcd" "a(bc)?d" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test optional characters matching"
- 
- expect
-    when parseStr "ad" "a(bc)?d" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test optional characters matching"
-
-expect 
-    when parseStr "abd" "a(bc)?d" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test optional characters matching"
-      
-expect  
-    when parseStr "abcbcd" "a(bc)?d" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test optional characters matching"
-        
-expect        
-    when parseStr "abbbcd" "ab*c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test zero or more matching"
-
-expect        
-    when parseStr "acd" "ab*c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test zero or more matching"
-
-expect
-    when parseStr "abcbcbcdfbcdbgc" "a(bc)*d" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test zero or more matching"  
-        
-expect
-    when parseStr "abcfdadbgc" "a(bc)*d" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test zero or more matching"  
-        
-expect
-    when parseStr "abxcfbxcdbgc" "a(bc)*d" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test zero or more matching" 
-        
-expect        
-    when parseStr "abbbcd" "ab+c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test at least one matching"
-
-expect        
-    when parseStr "acd" "ab+c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test at least one matching"
-
-expect
-    when parseStr "abcbcbcdfbcdbgc" "a(bc)+d" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test at least one matching"  
-        
-expect
-    when parseStr "abcfdadbgc" "a(bc)+d" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test at least one matching"  
-        
-expect
-    when parseStr "abxcfbxcdbgc" "a(bc)+d" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test at least one matching"  
-        
-expect        
-    when parseStr "abbbcd" "ab{3}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition matching" 
-        
-expect        
-    when parseStr "abbbbbbbbbbbcd" "ab{11}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition matching" 
-        
-expect        
-    when parseStr "abbbbcd" "ab{3}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition matching" 
-
-expect        
-    when parseStr "abbcd" "ab{3}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition matching" 
-        
-expect        
-    when parseStr "abbbbbbcd" "a(bb){3}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition matching" 
-        
-expect        
-    when parseStr "abbbbbbbcd" "a(bb){3}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition matching" 
-        
-expect        
-    when parseStr "abbcd" "a(bb){3}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition matching"
-        
-expect        
-    when parseStr "abcd" "ab{1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition range matching"  
-        
-expect        
-    when parseStr "abbcd" "ab{1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition range matching"  
-        
-expect        
-    when parseStr "acd" "ab{1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition range matching"  
-        
-        
-expect        
-    when parseStr "abbbcd" "ab{1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition range matching"  
-        
-expect        
-    when parseStr "abbbbbbbbbbcd" "ab{10,11}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition range matching" 
-        
-expect        
-    when parseStr "abbbbbbbbbcd" "ab{10,11}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition range matching"
-        
-expect        
-    when parseStr "abcd" "ab{1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition range matching"  
-        
-expect        
-    when parseStr "abbcd" "a(bb){1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition range matching"  
-        
-expect        
-    when parseStr "abbbbcd" "a(bb){1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test repetition range matching"  
-        
-expect        
-    when parseStr "abbbcd" "a(bb){1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition range matching"  
-        
-expect        
-    when parseStr "abbbbbbcd" "a(bb){1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition range matching"  
-         
-expect        
-    when parseStr "acd" "a(bb){1,2}c" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test repetition range matching"  
-         
-expect        
-    when parseStr "dad" "d[a-g]d" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test one of matching"  
-         
-expect        
-    when parseStr "abhd" "ab[a-g]d" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test one of matching"  
-expect        
-    when parseStr "a6a" "a[a-g1-7]a" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test one of matching" 
-        
-expect        
-    when parseStr "a8a" "a[a-g1-7]a" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test one of matching" 
-        
-expect        
-    when parseStr "zcz" "z[abcd]z" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test one of matching" 
-        
-expect        
-    when parseStr "zfz" "z[abcd]z" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test one of matching" 
-        
-expect        
-    when parseStr "z*z" "z[\\*\\?\\{]z" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test one of matching" 
-        
-expect        
-    when parseStr "z^z" "z[\\*\\?\\{]z" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test one of matching" 
-        
-expect        
-    when parseStr "dad" "d[^a-g]d" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test except of matching"      
-        
-expect        
-    when parseStr "abhd" "ab[^a-g]d" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test except of matching"  
-expect        
-    when parseStr "a6a" "a[^a-g1-7]a" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test except of matching" 
-        
-expect        
-    when parseStr "a8a" "a[^a-g1-7]a" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test except of matching" 
-        
-expect        
-    when parseStr "zcz" "z[^abcd]z" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test except of matching" 
-        
-expect        
-    when parseStr "zfz" "z[^abcd]z" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test except of matching" 
-        
-expect        
-    when parseStr "z*z" "z[^\\*\\?\\{]z" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test except of matching" 
-        
-expect        
-    when parseStr "z^z" "z[^\\*\\?\\{]z" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test one of matching" 
-        
-expect        
-    when parseStr "abcdefgh" "^abc" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test start end matching"     
-        
-expect        
-    when parseStr "ffggabcdefgh" "^abc" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test start end matching"  
-        
-expect        
-    when parseStr "aabc" "abc$" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test start end matching"     
-        
-        
-expect        
-    when parseStr "ffggabcde" "abc$" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test start end matching"   
-        
-
-expect        
-    when parseStr "abc" "^abc$" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test start end matching"  
-        
-expect        
-    when parseStr "aabc" "^abc$" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test start end matching"     
-        
-        
-expect        
-    when parseStr "abcde" "^abc$" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test start end matching"
-        
-expect        
-    when parseStr "ffggabcdeabc" "^abc|abc$" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test start end matching"  
-          
-expect        
-    when parseStr "ffggaaxyzbc" "abc|axyz|jjjj" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test separator matching"  
-          
-expect        
-    when parseStr "ffggjjjjzbc" "abc|axyz|jjjj" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test separator matching"  
-          
-expect        
-    when parseStr "ffggjjjzbc" "abc|axyz|jjjj" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test separator matching"  
-          
-expect        
-    when parseStr "aaaccaaaa" "aa(bb|cc)aa" is 
-        Ok parsed ->
-            parsed.result == Bool.true
-        Err mes -> mes == "test separator matching"  
-          
-expect        
-    when parseStr "aaacccaaaa" "aa(bb|cc)aa" is 
-        Ok parsed ->
-            parsed.result == Bool.false
-        Err mes -> mes == "test separator matching"  
-          
-# more  complex  test
-
-#for now I consider research phase as done , I should move to stabilisation phase now
-#but I will postpone this a bit. 
-#so in near future, I need to do type annotations and conduct fair bit of more comprehensive testing   
-
-    
-    
