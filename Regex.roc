@@ -1,14 +1,6 @@
-app "command"
-    packages {
-        pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br"
-    }
-    #exposes []
-    imports [
-        pf.Stdout,
-        pf.Stdin,
-        Regex,
-    ]
-    provides [main] to pf
+interface Regex
+    exposes [parseStr,getValue, ParsingResultType ]
+    imports []
 
 
 RecoverRegexTagsType : [ Empty, Character, Dot, CaptureOpen, CaptureClose, AtLeastOne, ZeroOrMore, 
@@ -197,7 +189,193 @@ changeElement = \ tree, id ,node ->
             
             { tree & content : updatedContent }          
         Err _ -> { cnt : tree.cnt + 1, content : Dict.insert tree.content  tree.cnt node }
+
+getValue : List Nat, I32, TreeType -> Result (List U8) Str 
+getValue = \ indices, parentId, tree ->
+     
+    when List.first indices is 
+        Ok indice -> 
+            when Dict.get tree.content parentId  is 
+                Ok node ->
+                    when List.get node.children indice is 
+                        Ok childIdx -> 
+                            if List.len indices == 1 then
+                                getDirectly tree childIdx
+                            else
+                                getValue (List.dropFirst indices 1) childIdx tree 
+                        Err _ -> Err  "children missing"                              
+                Err _ -> Err  "parent node missing"
     
+        Err _ ->  Err  "provide ate least one indice"
+
+createRepetitionOutOfTree : TreeType -> Result SerieType Str
+createRepetitionOutOfTree =  \ tree ->
+    errMess = "Repetition token problem:  "
+    when Dict.get tree.content 0  is 
+        Ok head ->
+            searchResult = List.walkUntil head.children (Ok []) ( \ stateResult, childId ->
+                when  stateResult  is 
+                    Ok state ->
+
+                        when  (getDirectly tree childId ) is 
+                            Ok valLst ->
+                                when Str.fromUtf8 valLst is
+                                    Ok strVal ->
+                                        when Str.toI32 strVal  is 
+                                            Ok numVal ->
+                                                Continue (Ok  (List.append state  numVal) )
+                                            Err _ -> Break (Err (Str.concat errMess "wrong child structure, incompatible value" ))     
+                                    Err _ ->
+                                        Break (Err (Str.concat errMess "wrong child structure, incompatible value" ))                 
+            
+                            Err _ -> 
+                                Break (Err (Str.concat errMess "wrong child structure, missing value" ))
+                    Err message -> Break (Err message)
+                )
+                
+            when searchResult is 
+                Ok search ->
+                    when search is  
+                        [val] ->
+                            Ok ( NTimes val )
+                                        
+                        [val1, val2] ->
+                            if  val1 < val2  then 
+                                Ok (MNTimes val1  (val2 - val1) )
+                            else 
+                                Err  ( Str.concat errMess " first value greather than second " )
+                        _  ->  Err  ( Str.concat errMess "wrong structure" )
+                
+                Err message  -> Err message  
+        Err  _  ->  Err  ( Str.concat errMess " no values " )
+
+
+createExceptOutOfTree : TreeType -> Result TokenType Str
+createExceptOutOfTree =  \ tree ->
+    errMess = "Except token problem:  "
+    when Dict.get tree.content 0  is 
+        Ok head ->
+            searchResult = seekInTreeOnlyExcept head tree errMess
+            when  searchResult is 
+                Ok search  ->
+                    if List.isEmpty search.characterSet == Bool.false &&
+                        List.isEmpty search.limitRanges == Bool.false then
+                        chain =
+                            []
+                            |> List.append (CharacterSet search.characterSet)
+                            |> List.append (LimitRanges search.limitRanges)
+                            
+                        Ok (createToken (Except  chain) Once Bool.false )
+            
+                    else if List.isEmpty search.characterSet == Bool.false then 
+                        Ok (createToken (Except [CharacterSet search.characterSet]) Once Bool.false ) 
+                    else if List.isEmpty search.limitRanges == Bool.false then
+                        Ok (createToken (Except [LimitRanges search.limitRanges]) Once Bool.false )
+                    else 
+                        Err (Str.concat errMess "empty tree") 
+                    
+                Err message -> Err message
+        Err _ -> Err  (Str.concat errMess "not right format of tree")
+
+
+seekInTreeOnlyExcept : TreeNodeType, TreeType, Str ->  Result  { characterSet : List U8, limitRanges : List { left : U8, right : U8 } } Str
+seekInTreeOnlyExcept = ( \ head, tree, errMess -> 
+    List.walk head.children (Ok { characterSet : [], limitRanges : [] }) ( \ stateOutResult, topChildIdId ->
+        when Dict.get tree.content topChildIdId is
+            Ok childHead ->
+                childResult =
+                    List.walk childHead.children (Ok { characterSet : [], limitRanges : [] }) ( \ state, childId ->
+                        when state is 
+                            Ok items ->
+                                    
+                                when getDirectlyChildrenCnt tree childId is 
+                                    Ok  cnt ->
+                                            if cnt == 1 then 
+                                                when  (getValue [0] childId tree) is 
+                                                    Ok val -> 
+                                                        when val is 
+                                                            [ '\\', secVal ] ->
+                                                                Ok { items & characterSet :  List.append items.characterSet  secVal  }
+                                                            _ -> 
+                                                                Ok { items & characterSet :  List.concat items.characterSet  val  }
+                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value" )
+
+                                            else if cnt == 2 then
+                                                getFirst = (\  valLst ->
+                                                    when List.first valLst is 
+                                                        Ok val -> Ok val
+                                                        Err _ -> Err  "no value"
+                                                    )
+                                                                            
+                                                when (getValue [0] childId tree) is    
+                                                    Ok val1Lst -> 
+                                                        when getFirst val1Lst is
+                                                            Ok val1 ->
+                                                                when (getValue [1] childId tree)  is
+                                                                    Ok val2Lst ->
+                                                                        when getFirst val2Lst is
+                                                                            Ok val2 -> 
+                                                                                Ok { items & limitRanges :  List.append items.limitRanges  { left : val1, right : val2 } }
+                                                                                
+                                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
+                                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
+                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
+                                                            
+                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
+
+                                            else 
+                                                Err (Str.concat errMess "wrong second level child structure" )
+                                    Err _ -> Err (Str.concat errMess "wrong second level child structure" )
+                                        
+                            Err  message -> Err  message  
+                        )
+                when stateOutResult is 
+                    Ok stateOut ->
+                        when childResult is 
+                            Ok result ->
+                                Ok { characterSet : List.concat  result.characterSet stateOut.characterSet,
+                                limitRanges : List.concat result.limitRanges stateOut.limitRanges}        
+                            Err  message -> Err  message    
+                    Err  message -> Err  message         
+                
+            Err  _ -> Err (Str.concat errMess "wrong structure" )  
+            ))
+
+
+createOnlyOutOfTree : TreeType -> Result TokenType Str    
+createOnlyOutOfTree =  \ tree ->
+    errMess = "Only token problem:  "
+    when Dict.get tree.content 0  is 
+        Ok head ->
+            searchResult = seekInTreeOnlyExcept head tree errMess
+            when  searchResult is 
+                Ok search  ->
+                    if List.isEmpty search.characterSet == Bool.false &&
+                        List.isEmpty search.limitRanges == Bool.false then
+                        chain =
+                            []
+                            |> List.append (createToken CaptureOpen Once Bool.false )
+                            |> List.append (createToken (CharacterSet search.characterSet) Once Bool.false )
+                            |> List.append (createToken CaptureClose Once Bool.false )
+                            |> List.append (createToken Separator Once Bool.false )
+                            |> List.append (createToken CaptureOpen Once Bool.false )
+                            |> List.append (createToken (LimitRanges search.limitRanges) Once Bool.false )
+                            |> List.append (createToken CaptureClose Once Bool.false )
+                            
+                        Ok (createToken (Sequence  chain) Once Bool.false )
+        
+                    else if List.isEmpty search.characterSet == Bool.false then 
+                        Ok (createToken (CharacterSet search.characterSet) Once Bool.false ) 
+                    else if List.isEmpty search.limitRanges == Bool.false then
+                        Ok (createToken (LimitRanges search.limitRanges) Once Bool.false )
+                    else 
+                        Err (Str.concat errMess "empty tree") 
+                    
+                Err message -> Err message
+        Err _ -> Err  (Str.concat errMess "not right format of tree")
+        
+
+
 composeMatchedStructure :  TreeType, I32, [CaptureOpen, CaptureClose] -> TreeType 
 composeMatchedStructure = \ tree, id, tag ->
     
@@ -300,18 +478,10 @@ evalRegex = \ utfLst, patterns, regex ->
 
 
 checkMatching : List U8, List TokenType -> ParsingResultType
-checkMatching = \ utfLst, reg  -> 
-        when pattern is 
-            LimitRanges lst -> 
-                when checkRangeBug utf lst is 
-                    Within -> Consume
-                    Outside -> NoMatch
-            CharacterSet lst ->
-                when List.findFirst lst  ( \ char -> char == utf ) is 
-                    Ok _ -> Consume
-                    Err _ -> NoMatch 
-            _ -> NoMatch
+checkMatching = \ utfLst, reg  ->
 
+
+    matchStr : U8, SearchRegexTagsType -> [Consume, NoMatch]
     matchStr = \ utf, pattern ->
 
         checkRange = ( \ val, ranges -> 
@@ -348,15 +518,10 @@ checkMatching = \ utfLst, reg  ->
                     Outside -> Consume
             Except  tokens  ->
                 List.walkUntil tokens Consume ( \  state , token  ->
-                #  because below  crashes
-                #    when matchStr  utf  token is
                     when matchStr utf  token is
-                #    when matchStrBugPrevent  utf  token is
                         Consume -> Break  NoMatch
                         NoMatch -> Continue state 
                     ) 
-                    
-                
             Character val ->
                 if val == utf then
                     Consume    
@@ -366,6 +531,7 @@ checkMatching = \ utfLst, reg  ->
                 Consume
             _ -> NoMatch
     
+    matchUtf : U8, TokenType ->  [Consume TokenType, NoMatch TokenType]
     matchUtf = ( \ utf, tokenMeta ->
         result = matchStr utf tokenMeta.token  
        
@@ -373,8 +539,9 @@ checkMatching = \ utfLst, reg  ->
             Consume -> Consume tokenMeta 
             NoMatch -> NoMatch tokenMeta 
     )
-
+    updateRegex : List ParsingResultType  ->  List ParsingResultType
     updateRegex = (\regex ->  
+        updateRegexItemInternal : List ParsingResultType, ParsingResultType ->  List ParsingResultType
         updateRegexItemInternal = ( \ state, regItem ->
                 
                 when List.first regItem.current is 
@@ -502,7 +669,7 @@ checkMatching = \ utfLst, reg  ->
             updateRegexItemInternal state regItem
             )
         )
-
+    getFirstPat : ParsingResultType -> [Active {  pattern : TokenType , state : ParsingResultType }, Inactive ParsingResultType]
     getFirstPat = (\  state  ->  
         if state.meta == Inactive then
             Inactive state
@@ -513,20 +680,15 @@ checkMatching = \ utfLst, reg  ->
                 Err _ ->  
                     Inactive {state & meta : Inactive } 
             )
-
+    regeneratePat : ParsingResultType ->[Old ParsingResultType, New ParsingResultType ]
     regeneratePat = (\  state  -> 
         when List.first state.current is
             Ok pat -> 
                 Old state
             Err _ ->  
-                # if state.meta == Origin then
-                    # BUG  in this  line
-                    # getFirstPat  { state & current : state.regex } 
-                #    New { regex : state.regex, current : state.regex, matched : state.matched, result : state.result, missed : state.missed, left : state.left, captured : state.captured, meta : state.meta, strict : state.strict } 
-                # else 
                 New {state & meta : Inactive }  )
             
-            
+    checkLastListEmpty : List (List a) -> Bool     
     checkLastListEmpty = (\ listOfLists  ->
             when List.last listOfLists is
                 Ok lst -> 
@@ -538,6 +700,7 @@ checkMatching = \ utfLst, reg  ->
     # workaround: I haven't predicted that this information will be needed.
     # on earlier stages it would be cleaner (maybe)to extract this but not with this design
     # I just missed that opportunity and now I don't want to rip through entire thing to make it right
+    regexStartEndSetting : { updatedRegex : List TokenType, strict :  StrictType}  
     regexStartEndSetting = 
         when (List.first reg, List.last reg ) is
             (Ok  (  tokenFirst) , Ok (  tokenLast) ) ->
@@ -689,11 +852,319 @@ checkMatchingValidity = \ matchingResult ->
         Back -> List.isEmpty  matchingResult.left 
         Both -> (List.isEmpty  matchingResult.missed) && (List.isEmpty  matchingResult.left)
 
+getRegexTokens : {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} -> Result (List  TokenType) Str
+getRegexTokens = \ result  -> 
+    when result.tag is 
+        Character-> 
+            when List.first result.parsedResult.matched is 
+                Ok  matched  -> 
+                    Ok [(createToken  ( Character matched )  Once Bool.false )]
+                Err  _  -> Err "character  tag problem"
+        _ -> 
+            Err "wrong tag"
 
-main = 
-    #Stdout.write  clearScreenPat |> Task.await
-    Stdout.write  "kapusta"
+regexCreationStage :  List RecoverPatternType,  List TokenPerRegexType -> Result (List TokenPerRegexType ) Str
+regexCreationStage = \ inPatterns, ignitionPatterns ->
 
+    regPatterns = 
+        List.walk inPatterns (Ok []) ( \ state, pat->
+            when state is 
+                Ok patterns -> 
+                    when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
+                        Ok results ->
+                            
+                            List.walk  results (Ok []) ( \ inState, result ->
+                                when inState is 
+                                    Ok patLst ->
+                                        when  getRegexTokens result is 
+                                            Ok tokens -> 
+                                                workaround = 
+                                                    List.walk  tokens [] ( \ workState, token -> 
+                                                        List.append workState (createToken token.token token.serie  token.capture) )
+                                                # !!!!!!!!!!! crashes  here Ok [{ tag : pat.tag, tokens : tokens }]
+                                                Ok (List.concat patLst  workaround  )    
+
+                                            Err message -> Err message 
+                                    Err  message -> Err message     
+                                
+                            )
+                            |> (\ inTokensResult ->
+                                when  inTokensResult is 
+                                    Ok inTokens ->  
+                                        Ok ( List.append patterns { tag : pat.tag, tokens : inTokens } )
+                                    Err message ->  Err message )
+
+                        Err Empty ->  Err "Empty" 
+                        Err NoTokens ->  Err "NoTokens"
+                        Err PriorityListErr ->  Err "PriorityListErr"
+                Err message ->  Err message )
+    when regPatterns is 
+        Ok patterns ->
+            Ok  ( List.concat  ignitionPatterns  patterns )
+        Err  message  -> Err  message 
+
+regexCreationStage2 : Str, List TokenPerRegexType, List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} -> Result ( List TokenType )  Str
+regexCreationStage2  = \ str, patterns, currReg ->
+    ( evalRegex (Str.toUtf8  str) patterns currReg )
+    |> ( \ resultSet -> 
+        when resultSet is
+            Ok  results ->
+                List.walk results (Ok { lst : [] , capture : 0 }) ( \ outState, result  ->
+                    when outState is 
+                        Err message -> Err message 
+                        Ok state ->
+                            doCapture = \ capture  ->
+                                capture > 0
+                            
+                            
+                            modifLastInChain = (\ chainLst, token ->
+                                when List.last chainLst is 
+                                    Ok elem ->
+                                        when elem.token is 
+                                            Sequence  chain ->
+                                                when List.last chain is
+                                                    Ok lastOnChain ->
+                                                        closeLast = (\  lst, seq ->
+                                                            Sequence  seqChain = seq  
+                                                            when List.last seqChain is
+                                                                Ok  item  -> 
+                                                                    when item.token is 
+                                                                        Sequence  inChain ->
+                                                                            modifyLastInList 
+                                                                                lst (createToken (Sequence (closeLast seqChain (Sequence  inChain) ))  Once Bool.false)     
+                                                                        _ ->
+                                                                            List.append lst token 
+                                                                Err _ ->     
+                                                                        lst
+                                                                        )
+                                                                    
+                                                            
+                                                        when token.token is 
+                                                            CaptureClose ->
+                                                                closeLast chainLst (Sequence chain) 
+                                                               # List.append chainLst token            
+                                                            _ -> 
+                                                                modifyLastInList chainLst (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+
+                                                    Err _ ->
+                                                        modifyLastInList  chainLst  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+                                            _ ->  
+                                                List.append chainLst token                  
+                                    Err _ ->
+                                        List.append chainLst token
+                                        
+                            )
+                            # those two functions below exist because of some failures in design
+                            createUpdatedToken = ( \ token, cnt, op,  tokens ->
+                                        when token is
+                                            Ok elem ->
+                                                when elem.token is
+                                                    Sequence chain ->
+                                                        createUpdatedToken  (List.last chain)  cnt op (List.append tokens elem)      
+                                                    _ ->
+                                                        List.append tokens elem
+                                                        |> List.dropLast cnt
+                                                        |> List.walkBackwards  (Err "internal error during  + evaluation ") (  \ createResult , elemToken   -> 
+                                                            when elemToken.token is
+                                                                Sequence chain ->
+                                                                    when chain is 
+                                                                        [.., elemChain ] ->
+                                                                            when createResult is 
+                                                                                Ok updatedToken ->
+                                                                                    Ok (createToken (Sequence (modifyLastInList chain updatedToken)) elemToken.serie elemToken.capture )
+                                                                                _ ->
+                                                                                    Ok ( op elemToken )
+                                                                        [] -> Err " wrong + usage "
+                                                                _->
+                                                                    Ok ( op elemToken ))
+                                               
+                                            Err  _ ->  Err " wrong + usage "
+                                    )
+                                    
+                            omitCaptureEnd = ( \ inLst, op, cnt -> 
+                                        when List.last inLst is
+                                            Ok elem ->
+                                                when elem.token is 
+                                                    CaptureClose ->
+                                                        when omitCaptureEnd ( List.dropLast inLst  1) op (cnt +1) is 
+                                                            Ok updatedLst ->
+                                                                Ok (
+                                                                    List.append updatedLst elem)
+                                                            Err message -> Err message 
+                                                    _ ->
+                                                        when  createUpdatedToken (Ok elem)  cnt op [] is
+                                                            Ok updatedLast ->  Ok ( modifyLastInList inLst updatedLast )
+                                                            Err  message -> Err  message  
+                                                        
+                                                
+                                            Err _ -> Err "Wrong usage of +/*/Repetition/? in pattern"        
+                                        )
+                 
+                            when  result.tag is 
+                                Character ->
+                                    when List.first result.parsedResult.matched is 
+                                        Ok  matched  ->
+                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character matched) Once (doCapture state.capture)) }
+                                        Err _ -> Err "parser  match problem"
+                                    
+                                Dot ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken Dot Once (doCapture state.capture) )  }
+                                CaptureOpen ->
+                                    
+                                    openLst = 
+                                        modifLastInChain state.lst (createToken CaptureOpen Once Bool.false)
+                                        |> modifLastInChain  (createToken (Sequence []) Once Bool.false)
+                                    Ok { lst : openLst, capture : state.capture + 1}
+                                CaptureClose ->
+                                    Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : state.capture - 1 }
+                                Separator -> 
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken Separator Once Bool.false )  }
+                                
+                                Digit ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken Digit Once (doCapture state.capture) )  }
+                                NoDigit ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken NoDigit Once (doCapture state.capture) )  }
+                                Alphanumeric ->
+                                    limitRangToken = LimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' },{ left : '_', right : '_' }]
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once (doCapture state.capture) )  }
+                                NoAlphanumeric ->
+                                    limitRangToken = ReverseLimitRanges [{ left : 'A', right : 'Z' },{ left : 'a', right : 'z' },{ left : '0', right : '9' },{ left : '_', right : '_' }]
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken limitRangToken Once (doCapture state.capture) )  }
+                                Whitespace ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
+                                NoWhitespace ->
+                                    Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
+                                Only -> 
+                                    when createOnlyOutOfTree result.parsedResult.captured is
+                                        Ok onlyToken -> 
+                                            Ok { state &  lst : modifLastInChain state.lst onlyToken }
+                                        Err message ->
+                                            Err message
+                                Except ->
+                                    when createExceptOutOfTree result.parsedResult.captured is
+                                        Ok exceptionToken ->
+                                            Ok { state &  lst : modifLastInChain state.lst exceptionToken }
+                                        Err message ->
+                                            Err message
+                                BackSlash->
+                                    when result.parsedResult.matched is 
+                                        [backslash, sign ] ->
+                                            Ok { state &  lst : modifLastInChain state.lst  (createToken (Character sign) Once (doCapture state.capture)) }
+                                        _ -> Err "back slash parser  match problem"
+                                    
+                                Repetition ->
+                                    when createRepetitionOutOfTree result.parsedResult.captured is
+                                        Ok serie -> 
+                                            when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
+                                                Ok newLst ->
+                                                    Ok { state &  lst : newLst }
+                                                Err message -> Err message     
+                                        Err message ->
+                                            Err message  
+                                RangeRepetition ->
+
+                                    when createRepetitionOutOfTree result.parsedResult.captured is
+                                        Ok serie -> 
+                                            when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
+                                                Ok newLst ->
+                                                    Ok { state &  lst : newLst }
+                                                Err message -> Err message                                              
+                                        Err message ->
+                                            Err message 
+                                ZeroOrMore ->                                            
+                                    when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : ZeroOrMore } )  0 is 
+                                        Ok newLst ->
+                                            Ok { state &  lst : newLst }
+                                        Err message -> Err message  
+                                Optional ->
+                                     when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : (NoMorethan 1) } )  0 is 
+                                        Ok newLst ->
+                                            Ok { state &  lst : newLst }
+                                        Err message -> Err message  
+                                AtLeastOne ->
+                                    
+
+                                    when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : AtLeastOne } )  0 is 
+                                        Ok newLst ->
+                                            Ok { state &  lst : newLst }
+                                        Err message -> Err message  
+                     
+                                Empty -> Err "Empty"  
+                        )
+                |> (\ tokenLst -> 
+                    when tokenLst is 
+                        Ok lstRec ->
+                            Ok lstRec.lst
+                        Err message -> Err message  )
+                         
+            Err Empty ->  Err "Empty" 
+            Err NoTokens ->  Err "NoTokens"
+            Err PriorityListErr ->  Err "PriorityListErr"
+    )
+
+stagesCreationRegex : List * -> Result  ( List  TokenPerRegexType ) Str
+stagesCreationRegex  = \ _param -> 
+    
+    # this is not really needed 
+    # all patterns could be placed in regexSeedPattern right out of the bat (in token form)
+    # but this approach has some benefits:
+    # - quite decent self validation during development
+    # - additional restrictions which limit unbounded sea of possibilities during design phase
+    # - patterns are easy to recognize from their's string form
+    stage1 = regexCreationStage firstStagePatterns regexSeedPattern
+    when stage1 is 
+        Ok stage1Pat ->
+            patternAux1Result = regexCreationStage2 aux1Patt stage1Pat  []
+            when patternAux1Result is 
+                Ok patternAux1 ->
+                    stage2Pat = List.append stage1Pat  { tag : Only, tokens : patternAux1 }
+
+                    List.walkUntil  secondStagePatterns (Ok stage1Pat) ( \ state, pat  ->
+                        when state is 
+                            Ok currentPatterns ->
+
+                                patternResult = regexCreationStage2 pat.str stage2Pat  []
+
+                                when patternResult is 
+                                    Ok pattern ->
+                                        Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
+                                    Err message -> Break (Err message)
+                            Err message -> Break (Err message)
+                    )
+                    
+                Err message -> Err message   
+
+        Err message -> Err message
+
+availableRegex : Result ( List  TokenPerRegexType ) Str
+availableRegex = stagesCreationRegex [] 
+
+parseStr : Str, Str -> Result ParsingResultType  Str
+parseStr = \ str, pattern -> 
+    
+    when availableRegex is 
+        Ok stage1Pat ->
+            tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
+
+            when tokensFromUserInputResult is 
+                Ok tokensFromUserInput ->
+                    
+                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
+                    # for now get longest maybe??
+                    Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
+                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
+                        if state.result == Bool.true then
+                            if List.len parsResult.matched > List.len state.matched  then 
+                                parsResult
+                            else 
+                                state
+                        else 
+                            parsResult ))
+                Err message -> 
+                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
+
+        Err message -> 
+            Err  (Str.concat "This is internal regex error not your fault\n"  message )
 
 
 
