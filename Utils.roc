@@ -1,5 +1,5 @@
 interface Utils
-    exposes [asciiArrayToNumber]
+    exposes [asciiArrayToNumber, tokenize, utfToStr]
     imports []
 
 NumType : I32
@@ -22,3 +22,13 @@ asciiArrayToNumber = \ lst, convert ->
     |> Result.withDefault "0"
     |> convert
     |> Result.withDefault 0
+
+tokenize  = \ str  -> 
+    Str.split str  " "
+    |> List.dropIf  Str.isEmpty
+    
+utfToStr : List U8  -> Str
+utfToStr = \ lst ->
+    when  Str.fromUtf8 lst  is 
+        Ok str -> str
+        Err _ -> ""

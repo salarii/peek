@@ -10,12 +10,6 @@ app "peek"
     provides [main] to pf
 
 
-tokenize  = \ str  -> 
-    Str.split str  " "
-    |> List.map ( \ token -> Str.replaceEach token  "+"  " " )
-    |> List.dropIf  Str.isEmpty
-
-
 wordMatches = \ word, patterns ->
     List.walk patterns Bool.false ( \flag, pat -> 
         if flag == Bool.true then

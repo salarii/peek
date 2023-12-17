@@ -1,6 +1,6 @@
 interface Regex
     exposes [parseStr,getValue, ParsingResultType ]
-    imports []
+    imports [Utils]
 
 
 RecoverRegexTagsType : [ Empty, Character, Dot, CaptureOpen, CaptureClose, AtLeastOne, ZeroOrMore, 
@@ -62,8 +62,8 @@ secondStagePatterns =  [
     { tag : BackSlash, str : "\\T.?{}^*T" },  # " #<- this artifact is serves for visual studio code 
     { tag : Repetition, str : "{(\\d)+}"},   #"   
     { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, #"
-    { tag : Except, str : "[^(((.)-(.))|((.))|((\\T.?{}^*T)))+]" }, #"
-    { tag : Only, str : "[(((.)-(.))|((.))|((\\T.?{}^*T)))+]" } #"
+    { tag : Except, str : "[^(((.)-(.))|((\\T.?{}^*T))|((.)))+]" }, #"
+    { tag : Only, str : "[(((.)-(.))|((\\T.?{}^*T))|((.)))+]" } #"
     ]  # "
 
     
@@ -146,6 +146,18 @@ changeValue = \ tree, id, value->
     when modifyActive tree id modify is 
         Ok newTree -> newTree
         _ -> tree
+
+cntLivesValues : TreeType, I32->  Nat
+cntLivesValues = \ tree, id -> 
+    when Dict.get tree.content id is 
+        Ok node ->
+            if List.isEmpty node.children == Bool.true then
+                List.len node.value
+            else 
+                List.walk node.children 0 ( \cnt, childId ->
+                    cnt + cntLivesValues tree childId
+                    )
+        Err _ -> 0
 
 addElement : TreeType, I32, TreeNodeType ->  TreeType
 addElement = \ tree, parentId ,node -> 
@@ -458,7 +470,7 @@ splitChainOnSeparators = \ chain, inputLst ->
 
 
 evalRegex : List U8, List TokenPerRegexType, List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType}  -> Result ( List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} ) [Empty, NoTokens, PriorityListErr]
-evalRegex = \ utfLst, patterns, regex ->    
+evalRegex = \ utfLst, patterns, regex ->
     if List.isEmpty utfLst then
         Ok regex
     else
@@ -473,7 +485,8 @@ evalRegex = \ utfLst, patterns, regex ->
         |> getPrioToken
         |> ( \ prioToken ->
             when prioToken is
-                Ok token -> evalRegex token.parsedResult.left patterns  ( List.append regex token ) 
+                Ok token ->
+                    evalRegex token.parsedResult.left patterns  ( List.append regex token ) 
                 Err message ->  Err message  )
 
 
@@ -508,7 +521,7 @@ checkMatching = \ utfLst, reg  ->
                 when List.findFirst lst  ( \ char -> char == utf ) is 
                     Ok _ -> NoMatch
                     Err _ -> Consume    
-            Digit ->   # fix  that  later
+            Digit ->   
                 when checkRange utf [{ left : 48, right : 57 }] is 
                     Within -> Consume
                     Outside -> NoMatch
@@ -555,7 +568,7 @@ checkMatching = \ utfLst, reg  ->
                             CaptureOpen ->
                                 tmpState = {regItem & current : List.dropFirst regItem.current 1}
                                 updateRegexItemInternal state { tmpState &  captured : (composeMatchedStructure tmpState.captured  0 CaptureOpen) }  
-                            CaptureClose ->        
+                            CaptureClose ->      
                                 tmpState = {regItem & current : List.dropFirst regItem.current 1}    
                                 updateRegexItemInternal state { tmpState &   captured : composeMatchedStructure tmpState.captured  0 CaptureClose } 
                         
@@ -666,7 +679,11 @@ checkMatching = \ utfLst, reg  ->
                     Err _ -> List.append state regItem )
      
         List.walk  regex [] ( \ state, regItem ->
-            updateRegexItemInternal state regItem
+            if regItem.meta == Active then 
+                updateRegexItemInternal state regItem
+            else
+
+                List.append  state regItem
             )
         )
     getFirstPat : ParsingResultType -> [Active {  pattern : TokenType , state : ParsingResultType }, Inactive ParsingResultType]
@@ -733,31 +750,36 @@ checkMatching = \ utfLst, reg  ->
                         { updatedRegex : reg, strict : No }
             _ ->  { updatedRegex : reg, strict : No }
     
-    complexSearch : { missed : List U8,  parsing : List ParsingResultType } 
-    complexSearch = 
-        List.walk utfLst { missed : [] , parsing : [createParsingRecord regexStartEndSetting.updatedRegex Active  regexStartEndSetting.strict]}  ( \ outState, utf ->
+    push = 'a'
+    complexSearch : { cnt : Nat, missed : List U8,  parsing : List ParsingResultType } 
+    complexSearch =
+        #
+        List.walk (List.append utfLst push)  { cnt : 1, missed : [] , parsing : [createParsingRecord regexStartEndSetting.updatedRegex Active  regexStartEndSetting.strict]}  ( \ outState, utf ->
             
             updatedStates = updateRegex outState.parsing 
+            
+
             List.walk updatedStates [] ( \ state, processedReg ->   
-                
-                # it is  stupid  but without  this line it is crashing
-                #a  =  printMe  processedReg.regex
-                
-                
-                if processedReg.result == Bool.true then
-                    List.append state { processedReg & left : List.append  processedReg.left utf} 
+
+                if processedReg.result == Bool.true  then
+                    if outState.cnt <= List.len utfLst then
+                        List.append state { processedReg & left : List.append  processedReg.left utf} 
+                    else
+                        List.append state processedReg
                 else   
-                    manageIteration = ( \ inProcessedReg,curState ->
-                  
+                    manageIteration = ( \ inProcessedReg, curState ->
+                        
                         when getFirstPat inProcessedReg is
                             Inactive patternSet ->
-                                List.append curState inProcessedReg
+                                if  outState.cnt > List.len utfLst then
+                                    List.append curState { inProcessedReg & current : [], result : Bool.true, left : [], meta : Inactive}
+                                else
+                                    List.append curState { inProcessedReg & current : [], result : Bool.true, left : [utf], meta : Inactive}
+                                
                             Active matchThis ->                                    
                                     updatedState = matchThis.state
   
                                     current = List.dropFirst  updatedState.current  1
-                                    #   BUG  this  crashes 
-                                    #ppp = List.isEmpty current == Bool.true 
                                     updatedCapture =
                                         if matchThis.pattern.capture == Bool.true then
                                             changeValue updatedState.captured 0 utf  
@@ -765,40 +787,34 @@ checkMatching = \ utfLst, reg  ->
                                             updatedState.captured
                                     when matchUtf utf  matchThis.pattern is 
                                         Consume updatedToken ->
-                                            
-                                            allowEnd = \ lst, allowInState ->
-                                                List.walkUntil lst {allow: Bool.true, state : allowInState }  ( \allowState, elem ->
-                                                    if elem.token == CaptureClose then 
-                                                        allowStateUpdate = allowState.state
-                                                        Continue {allowState & state : { allowStateUpdate &   captured : composeMatchedStructure allowStateUpdate.captured  0 CaptureClose } }
-                                                        
-                                                    else
-                                                        Break  { allowState & allow :  Bool.false } 
-                                                ) 
-                                            result = allowEnd current updatedState
-                                            if result.allow == Bool.true then
-                                                allowState = result.state
-                                                List.append curState { allowState &  matched : List.append allowState.matched  utf, current : [], result : Bool.true, left : [], captured : updatedCapture}
+                                            if outState.cnt > List.len utfLst then
+                                                curState
                                             else
-                                                when regeneratePat updatedState is 
-                                                    Old _ -> 
-                                                        List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture} 
-                                                    New newState ->  List.append curState  newState
+                                                if List.isEmpty current == Bool.true then 
+                                                    List.append curState { updatedState &  matched : List.append updatedState.matched  utf, current : [], result : Bool.true, left : [], captured : updatedCapture, meta : Inactive}
+                                                else  
+                                                    List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture}
+
                                         NoMatch _ ->
                                                 curState
                                              
                                         _ -> curState  
                                 )
                     manageIteration processedReg state )
-                    |> ( \ parsingSet  -> 
-                        updatedMissed = List.append outState.missed utf
-                        parsingState = createParsingRecord regexStartEndSetting.updatedRegex Active  regexStartEndSetting.strict
-                        { missed : updatedMissed,
-                        parsing : List.append  parsingSet { parsingState & missed : updatedMissed}  } )
+                    |> ( \ parsingSet  ->
+                        if outState.cnt <= List.len utfLst then
+                            updatedMissed = List.append outState.missed utf
+                            parsingState = createParsingRecord regexStartEndSetting.updatedRegex Active  regexStartEndSetting.strict
+                            {
+                            cnt : outState.cnt + 1,
+                            missed : updatedMissed,
+                            parsing : List.append  parsingSet { parsingState & missed : updatedMissed}  } 
+                        else
+                            { outState & cnt : outState.cnt + 1, parsing : parsingSet }
+                        )
                      
         )
     List.walk complexSearch.parsing  (createParsingRecord reg Inactive  No) ( \ state, parsResult -> 
-
                 
         updatedParsResult  =  { parsResult &  result :(checkMatchingValidity parsResult) && parsResult.result  }  
         
@@ -806,6 +822,9 @@ checkMatching = \ utfLst, reg  ->
             if List.len updatedParsResult.matched > List.len state.matched  then 
 
                 updatedParsResult
+            else if List.len updatedParsResult.matched == List.len state.matched &&
+                cntLivesValues  updatedParsResult.captured 0 < cntLivesValues state.captured 0 then 
+                updatedParsResult  #  this  is a bit silly, used only as  workaround 
             else 
                 state
         else 
@@ -820,7 +839,6 @@ printMe = (  \ arrayPrt ->
                     when Str.fromUtf8 [val] is 
                         Ok str -> str
                         Err _ -> "  some weird problem in  extracting character token "
-                
                 Str.concat inState "\n"
                 |> Str.concat  "character : "
                 |> Str.concat  extractedChar  
@@ -837,8 +855,12 @@ printMe = (  \ arrayPrt ->
                 |> Str.concat (printMe array)
                 |> Str.concat "\nexit sequence  <- "
             Digit -> Str.concat inState "\nDigit"
-            CharacterSet _ -> Str.concat inState "\nCharacter set"  
+            NoDigit -> Str.concat inState "\nNo Digit"
+            CharacterSet _ -> 
+                Str.concat inState "\nCharacter set"  
             LimitRanges _ -> Str.concat inState "\nLimit Ranges set"
+            ReverseLimitRanges _ -> Str.concat inState "\nReverse limit Ranges"
+            Except _ -> Str.concat inState "\nExcept"
             _ -> 
                 "\n unknown token "
         )
@@ -1034,16 +1056,16 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
-                                Only -> 
+                                Only ->
                                     when createOnlyOutOfTree result.parsedResult.captured is
                                         Ok onlyToken -> 
-                                            Ok { state &  lst : modifLastInChain state.lst onlyToken }
+                                            Ok { state &  lst : modifLastInChain state.lst {onlyToken & capture : (doCapture state.capture) }  }
                                         Err message ->
                                             Err message
                                 Except ->
                                     when createExceptOutOfTree result.parsedResult.captured is
                                         Ok exceptionToken ->
-                                            Ok { state &  lst : modifLastInChain state.lst exceptionToken }
+                                            Ok { state &  lst : modifLastInChain state.lst {exceptionToken & capture : (doCapture state.capture) } }
                                         Err message ->
                                             Err message
                                 BackSlash->
@@ -1148,7 +1170,6 @@ parseStr = \ str, pattern ->
 
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
-                    
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
                     # for now get longest maybe??
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  

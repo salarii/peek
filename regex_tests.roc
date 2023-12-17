@@ -8,7 +8,16 @@ app "testRegex"
     ]
     provides [main] to pf
 
-main =   Stdout.write  "the goal ofthis unit is to test Regex.roc"
+main =   
+    kk =
+        when Regex.parseStr "a6a" "a[a-g1-7]a" is 
+            Ok parsed ->
+                dbg parsed.result 
+                parsed.result == Bool.false
+            Err mes -> mes == "test except of matching" 
+
+
+    Stdout.write  "the goal ofthis unit is to test Regex.roc"
 
 
  #   chainRange =
