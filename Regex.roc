@@ -802,15 +802,14 @@ checkMatching = \ utfLst, reg  ->
                                 )
                     manageIteration processedReg state )
                     |> ( \ parsingSet  ->
-                        if outState.cnt <= List.len utfLst then
+          
                             updatedMissed = List.append outState.missed utf
                             parsingState = createParsingRecord regexStartEndSetting.updatedRegex Active  regexStartEndSetting.strict
                             {
                             cnt : outState.cnt + 1,
                             missed : updatedMissed,
                             parsing : List.append  parsingSet { parsingState & missed : updatedMissed}  } 
-                        else
-                            { outState & cnt : outState.cnt + 1, parsing : parsingSet }
+             
                         )
                      
         )
