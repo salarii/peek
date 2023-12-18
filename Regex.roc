@@ -54,16 +54,19 @@ firstStagePatterns = [
         { tag : Whitespace, str : "\\s" },
         { tag : NoWhitespace, str : "\\S" }]
 
-aux1Patt : Str
-aux1Patt =  "T(((.+)))T"
+auxOnly : Str
+auxOnly =  "T(((.+)))T"
+
+auxExcept : Str
+auxExcept =  "E(((.+)))E"
 
 secondStagePatterns: List  RecoverPatternType
 secondStagePatterns =  [
     { tag : BackSlash, str : "\\T.?{}^*T" },  # " #<- this artifact is serves for visual studio code 
     { tag : Repetition, str : "{(\\d)+}"},   #"   
     { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, #"
-    { tag : Except, str : "[^(((.)-(.))|((\\T.?{}^*T))|((.)))+]" }, #"
-    { tag : Only, str : "[(((.)-(.))|((\\T.?{}^*T))|((.)))+]" } #"
+    { tag : Except, str : "[^(((.)-(.))|((\\T.?{}^*T))|((E]E)))+]" }, #"
+    { tag : Only, str : "[(((.)-(.))|((\\T.?{}^*T))|((E]E)))+]" } #"
     ]  # "
 
     
@@ -1135,11 +1138,15 @@ stagesCreationRegex  = \ _param ->
     stage1 = regexCreationStage firstStagePatterns regexSeedPattern
     when stage1 is 
         Ok stage1Pat ->
-            patternAux1Result = regexCreationStage2 aux1Patt stage1Pat  []
-            when patternAux1Result is 
-                Ok patternAux1 ->
-                    stage2Pat = List.append stage1Pat  { tag : Only, tokens : patternAux1 }
-
+            patternAuxOnlyResult = regexCreationStage2 auxOnly stage1Pat []
+            patternAuxExceptResult = regexCreationStage2 auxExcept stage1Pat [] 
+            when (patternAuxOnlyResult, patternAuxExceptResult) is 
+                (Ok patternAuxOnly, Ok patternAuxExcept )->
+                    stage2Pat = 
+                        stage1Pat
+                        |> List.append  { tag : Only, tokens : patternAuxOnly }
+                        |> List.append  { tag : Except, tokens : patternAuxExcept }
+                        
                     List.walkUntil  secondStagePatterns (Ok stage1Pat) ( \ state, pat  ->
                         when state is 
                             Ok currentPatterns ->
@@ -1148,18 +1155,20 @@ stagesCreationRegex  = \ _param ->
 
                                 when patternResult is 
                                     Ok pattern ->
+
                                         Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
                                     Err message -> Break (Err message)
                             Err message -> Break (Err message)
                     )
                     
-                Err message -> Err message   
+                _-> Err "Only, except auxiliary patterns error"   
 
         Err message -> Err message
 
 availableRegex : Result ( List  TokenPerRegexType ) Str
 availableRegex = stagesCreationRegex [] 
 
+ 
 parseStr : Str, Str -> Result ParsingResultType  Str
 parseStr = \ str, pattern -> 
     
@@ -1169,6 +1178,7 @@ parseStr = \ str, pattern ->
 
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
+                
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
                     # for now get longest maybe??
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  

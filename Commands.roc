@@ -13,7 +13,7 @@ app "command"
     provides [main] to pf
 
 # first  cut
-PatternType : [ Regex  Str, Positive Str, Negative Str, Color Str  ]
+PatternType : [ Regex  Str, Allow Str, Blacklist Str, Color Str  ]
 
 
 CommandType : [
@@ -28,25 +28,45 @@ AnalyseConfigType :
 
 
 dummyFun = \  parsResult, config ->
-    dbg parsResult.captured
-    dbg "here"
     Ok { commands: [], patterns : []  }
 
 createColor : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
 createColor = \  parsResult, config ->
-    dbg Utils.utfToStr parsResult.matched
     when (Regex.getValue [0] 0 parsResult.captured) is
         Ok value -> 
             Ok { config & patterns : List.append config.patterns (Color (Utils.utfToStr value)) }
-        Err message -> Err "Internal application message when analysing command"
+        Err message -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
 
-#when (,
+createNumberLines : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+createNumberLines = \  parsResult, config -> 
+    Ok { config & commands : List.append config.commands NumberLines }
+
+createPatternToPattern : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+createPatternToPattern = \  parsResult, config ->
+    when ( 
+        Regex.getValue [0] 0 parsResult.captured,
+        Regex.getValue [1] 0 parsResult.captured,
+        Regex.getValue [2] 0 parsResult.captured,
+        Regex.getValue [3] 0 parsResult.captured)  is
+        (Ok pat1,Ok pat2, Ok pat3, Ok pat4) ->
+            when (pat1, pat2, pat3, pat4) is 
+                ([_,..],[_,..],[_,..],[_,..])->
+                    Ok { config & commands : List.append config.commands (FromPatternToPattern (Regex (Utils.utfToStr pat2)) (Regex (Utils.utfToStr pat4)) ) }
+                ([],[_,..],[_,..],[_,..])->
+                    Ok { config & commands : List.append config.commands (FromPatternToPattern (Allow (Utils.utfToStr pat2)) (Regex (Utils.utfToStr pat4)) ) }
+                ([_,..],[_,..],[],[_,..])->
+                    Ok { config & commands : List.append config.commands  (FromPatternToPattern (Regex(Utils.utfToStr pat2)) (Allow (Utils.utfToStr pat4)) ) }
+                ([],[_,..],[],[_,..])->
+                    Ok { config & commands : List.append config.commands (FromPatternToPattern (Allow (Utils.utfToStr pat2)) (Allow (Utils.utfToStr pat4))) }
+                _ ->
+                    Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
+        _ -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
 
 frontCommandsToHandlers : Dict Str ( ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str)
 frontCommandsToHandlers =
     Dict.empty {}
-    #|> Dict.insert "^[Nn][Ll]"  "numberlinesdummy"
-    #|> Dict.insert "@(.+)->@(.+)" "patterntopattern"
+    |> Dict.insert "^[Nn][Ll]@" createNumberLines
+    |> Dict.insert "([Rr])?@(.+)->([Rr])?@(.+)" createPatternToPattern
     #|> Dict.insert "^(\\d+)->(\\d+)@$" "from  line to line"
     #|> Dict.insert "^\\^(\\d+)" "section"
     #|> Dict.insert "^@$" "negative"
@@ -82,12 +102,9 @@ commandAnalysis = \ word, inState ->
     |> List.walkUntil (Ok inState) (\ state, pattern ->
         when state  is 
             Ok config -> 
-                dbg  word
-                dbg  pattern
                 when Regex.parseStr word pattern is 
                     Ok parsed ->
                         if parsed.result == Bool.true then
-
                             when Dict.get frontCommandsToHandlers pattern  is
                                 Ok handler ->
                                     Break (handler parsed config)
@@ -116,7 +133,7 @@ recoverConfigFromInput = \filterStr ->
 
 main = 
     #Stdout.write  clearScreenPat |> Task.await
-    dbg  recoverConfigFromInput  "c@pattern"
+    dbg  recoverConfigFromInput  "c@pattern  r@osa->@kosa NL@"
     
     Stdout.write  "Ok"
 

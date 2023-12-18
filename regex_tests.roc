@@ -10,7 +10,7 @@ app "testRegex"
 
 main =   
     kk =
-        when Regex.parseStr "a6a" "a[a-g1-7]a" is 
+        when Regex.parseStr "vvvgnl@" "g[Nn][Ll]@" is 
             Ok parsed ->
                 dbg parsed.result 
                 parsed.result == Bool.false
@@ -587,7 +587,15 @@ expect
 #but I will postpone this a bit. 
 #so in near future, and conduct fair bit of more comprehensive testing   
 
-    
-    
+# bugs  detected 
+expect        
+    when Regex.parseStr "c@pattern" "^[cC]@(.+)" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test separator matching"  
 
-
+expect        
+    when Regex.parseStr "nl@" "^[Nn][Ll]@$" is 
+        Ok parsed ->
+            parsed.result == Bool.true
+        Err mes -> mes == "test separator matching"  
