@@ -1,11 +1,11 @@
 interface Regex
-    exposes [parseStr,getValue, ParsingResultType ]
+    exposes [parseStr, parseStrCached, getValue, stagesCreationRegex, ParsingResultType, TokenType ]
     imports [Utils]
 
 
 RecoverRegexTagsType : [ Empty, Character, Dot, CaptureOpen, CaptureClose, AtLeastOne, ZeroOrMore, 
     Optional, Separator, Digit, NoDigit, Alphanumeric,NoAlphanumeric,
-    Whitespace, NoWhitespace, BackSlash, Repetition, RangeRepetition, Except, Only]
+    Whitespace, NoWhitespace, BackSlash, Repetition, RangeRepetition, Except, Only, FromTo]
 
 
 TokenPerRegexType : {tag : RecoverRegexTagsType, tokens : List TokenType} 
@@ -25,7 +25,7 @@ MetaType :  [Inactive, Active]
 StrictType : [ No, Front, Back, Both ]
 
 SearchRegexTagsType : [ Dot, CaptureClose, CaptureOpen, ReverseLimitRanges ( List { left : U8, right : U8 } ),
-            Separator,  CharacterSet (List U8), NotInCharacterSet (List U8), 
+            Separator,  CharacterSet (List U8), NotInCharacterSet (List U8), Only (List (SearchRegexTagsType)),
             Except (List (SearchRegexTagsType)), Character U8, Digit, NoDigit, LimitRanges ( List { left : U8, right : U8 } ),
             Sequence (List  { token :SearchRegexTagsType, serie : SerieType , capture : Bool  } ) ]  
 
@@ -37,6 +37,9 @@ ParsingResultType : { regex : List TokenType, current : List TokenType, matched 
                 missed : List U8, left : List U8, captured : TreeType, meta : MetaType, strict : StrictType }
 
 
+regexSeedPattern : List ( TokenPerRegexType )
+regexSeedPattern = [
+    { tag : Character, tokens : [ createToken  Dot  Once Bool.false ] } ]
 
 firstStagePatterns :  List  RecoverPatternType
 firstStagePatterns = [
@@ -60,6 +63,13 @@ auxOnly =  "T(((.+)))T"
 auxExcept : Str
 auxExcept =  "E(((.+)))E"
 
+
+secondStageHelperPatterns :  List  RecoverPatternType
+secondStageHelperPatterns = [
+    {tag : Except, str : "[^(.+)]" },
+    {tag : Only,  str : "[(.+)]" },
+]
+
 secondStagePatterns: List  RecoverPatternType
 secondStagePatterns =  [
     { tag : BackSlash, str : "\\T.?{}^*T" },  # " #<- this artifact is serves for visual studio code 
@@ -69,7 +79,40 @@ secondStagePatterns =  [
     { tag : Only, str : "[(((.)-(.))|((\\T.?{}^*T))|((E]E)))+]" } #"
     ]  # "
 
-    
+firstStageChains : Result (List TokenPerRegexType ) Str
+firstStageChains = regexCreationStage firstStagePatterns regexSeedPattern
+
+onlyExceptInternalPatterns : List  RecoverPatternType
+onlyExceptInternalPatterns = [
+    { tag : Character, str : "."},
+    { tag : BackSlash, str : "\\[.?{}^*]"},  # " #<- this artifact is serves for visual studio code 
+    { tag : FromTo, str : "(.)-(.)"},
+    ]
+
+evalAndAppendChain : List  RecoverPatternType, Result (List TokenPerRegexType ) Str ->  Result (List TokenPerRegexType ) Str
+evalAndAppendChain = \ pattern, stageChain ->
+    when stageChain is 
+        Ok chain ->
+            when createRegexFromData pattern stageChain is 
+                Ok newChainElem ->
+                    Ok (List.concat chain newChainElem)
+                Err message -> Err message  
+        Err _ -> Err  "chain stage broken, can't generate"
+
+secondStageHelperChains : Result (List TokenPerRegexType ) Str
+secondStageHelperChains = evalAndAppendChain secondStageHelperPatterns firstStageChains
+
+onlyExceptInternalChains : Result (List TokenPerRegexType ) Str
+onlyExceptInternalChains = createRegexFromData onlyExceptInternalPatterns secondStageHelperChains
+
+thirdStagePatterns: List  RecoverPatternType
+thirdStagePatterns =  [
+    { tag : BackSlash, str : "\\T.?{}^*T" },  # " #<- this artifact is serves for visual studio code 
+    { tag : Repetition, str : "{(\\d)+}"},   #"   
+    { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, #"
+    ]  # "
+
+
 priorities : Dict  RecoverRegexTagsType (Num a)    
 priorities =
     Dict.empty {}
@@ -90,7 +133,8 @@ priorities =
     |> Dict.insert NoWhitespace 1
     |> Dict.insert Only 2
     |> Dict.insert BackSlash 2
-    |> Dict.insert Repetition 2   
+    |> Dict.insert Repetition 2
+    |> Dict.insert FromTo 2  
     |> Dict.insert RangeRepetition 2
     |> Dict.insert Except 3
   
@@ -356,6 +400,62 @@ seekInTreeOnlyExcept = ( \ head, tree, errMess ->
             Err  _ -> Err (Str.concat errMess "wrong structure" )  
             ))
 
+mergeTokens : List TokenType -> Result (List TokenType ) Str
+mergeTokens = \ lst ->
+    dzynks =
+        List.walk lst (Ok {characterSet :createToken (CharacterSet []) Once Bool.false , limitRanges : createToken (LimitRanges []) Once Bool.false } ) ( \ stateResult, token ->
+            when  stateResult is 
+                Ok state ->
+                    when token.token is 
+                        Character char  -> 
+                            currentCharSet = state.characterSet
+                            
+                            when state.characterSet.token is 
+                                CharacterSet chars ->
+                                    Ok { state &  characterSet : { currentCharSet & token : CharacterSet ( List.append chars char )} }
+                                _ -> Err  "problem in merging tokens"   
+                            
+                        LimitRanges  ranges ->
+                            when ranges is 
+                                [ range ]  ->
+                                    currentLimitRang = state.limitRanges
+                                    when state.limitRanges.token is 
+                                        LimitRanges inRanges ->
+                                            Ok { state &  limitRanges : { currentLimitRang & token : LimitRanges ( List.append inRanges range )} }
+                                        _ -> Err  "problem in merging tokens"     
+                                _ -> Err  "problem in merging tokens"    
+                        _ ->  Err  "problem in merging tokens"
+                Err message -> Err message 
+        )
+        |> ( \ mergedResult ->
+            when mergedResult is
+                Ok merged  ->
+                    when merged.characterSet.token is 
+                        CharacterSet chars ->
+                            (
+                                when chars is 
+                                    [] ->
+                                        []
+                                    _ ->
+                                        [merged.characterSet])
+                                |> ( \ tokens ->
+                                    when merged.limitRanges.token is
+                                        LimitRanges ranges -> 
+                                            when ranges is
+                                                [] ->
+                                                    Ok tokens
+                                                _ ->  
+                                                    Ok (List.append tokens merged.limitRanges)
+                                                    
+                                        _ -> Err  "problem in merging tokens")
+                        _ ->  Err  "problem in merging tokens"
+                            
+                Err message -> Err message 
+                )
+    Err "asdas"
+
+
+    #        Err message -> Err message  )
 
 createOnlyOutOfTree : TreeType -> Result TokenType Str    
 createOnlyOutOfTree =  \ tree ->
@@ -438,9 +538,7 @@ createToken : SearchRegexTagsType, SerieType, Bool -> TokenType
 createToken = \ token, serie, capture ->
     { token :token, serie : serie, capture : capture  }
 
-regexSeedPattern : List ( TokenPerRegexType )
-regexSeedPattern = [
-    { tag : Character, tokens : [ createToken  Dot  Once Bool.false ] } ]
+
 
 modifyLastInList : List  a, a -> List  a
 modifyLastInList = \ lst, elem ->
@@ -474,6 +572,7 @@ splitChainOnSeparators = \ chain, inputLst ->
 
 evalRegex : List U8, List TokenPerRegexType, List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType}  -> Result ( List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} ) [Empty, NoTokens, PriorityListErr]
 evalRegex = \ utfLst, patterns, regex ->
+
     if List.isEmpty utfLst then
         Ok regex
     else
@@ -537,6 +636,12 @@ checkMatching = \ utfLst, reg  ->
                     when matchStr utf  token is
                         Consume -> Break  NoMatch
                         NoMatch -> Continue state 
+                    ) 
+            Only  tokens  ->
+                List.walkUntil tokens Consume ( \  state , token  ->
+                    when matchStr utf  token is
+                        Consume -> Continue state
+                        NoMatch -> Break  NoMatch 
                     ) 
             Character val ->
                 if val == utf then
@@ -630,6 +735,7 @@ checkMatching = \ utfLst, reg  ->
                                             |> (\ updatedCurrent -> 
                                                     List.concat inState ( updateRegexItemInternal [] {regItem & current : updatedCurrent} ) )  
                                         )
+                                        
                                     Once ->
                                         List.walk  chains  state  (  \ inState, inChain  ->
                                             List.concat inChain (List.dropFirst regItem.current 1)
@@ -1058,6 +1164,8 @@ regexCreationStage2  = \ str, patterns, currReg ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (CharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
+                                FromTo ->
+                                    Ok state
                                 Only ->
                                     when createOnlyOutOfTree result.parsedResult.captured is
                                         Ok onlyToken -> 
@@ -1126,9 +1234,27 @@ regexCreationStage2  = \ str, patterns, currReg ->
             Err PriorityListErr ->  Err "PriorityListErr"
     )
 
+createRegexFromData : List  RecoverPatternType, Result ( List  TokenPerRegexType ) Str -> Result  ( List  TokenPerRegexType ) Str
+createRegexFromData = \ inRegexData, regexBase -> 
+    when regexBase is 
+        Ok base ->
+            List.walkUntil  secondStagePatterns (Ok []) ( \ state, pat  ->
+                when state is 
+                    Ok currentPatterns ->
+                        patternResult = regexCreationStage2 pat.str base  []
+                        when patternResult is 
+                            Ok pattern ->
+                                Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
+                            Err message -> Break (Err message)
+                    Err message -> Break (Err message)
+                    )
+                    
+        Err message -> Err message
+
+
 stagesCreationRegex : List * -> Result  ( List  TokenPerRegexType ) Str
 stagesCreationRegex  = \ _param -> 
-    
+    dbg  "avail"
     # this is not really needed 
     # all patterns could be placed in regexSeedPattern right out of the bat (in token form)
     # but this approach has some benefits:
@@ -1165,13 +1291,13 @@ stagesCreationRegex  = \ _param ->
 
         Err message -> Err message
 
+# there is quite serious performance problem 
 availableRegex : Result ( List  TokenPerRegexType ) Str
 availableRegex = stagesCreationRegex [] 
 
  
 parseStr : Str, Str -> Result ParsingResultType  Str
 parseStr = \ str, pattern -> 
-    
     when availableRegex is 
         Ok stage1Pat ->
             tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat  []
@@ -1195,6 +1321,47 @@ parseStr = \ str, pattern ->
 
         Err message -> 
             Err  (Str.concat "This is internal regex error not your fault\n"  message )
+
+
+parseStrCached : Str, Str, Dict Str (List TokenType)-> Result {parsed : ParsingResultType,cache: Dict Str (List TokenType) }  Str
+parseStrCached = \ str, pattern, cache -> 
+    when availableRegex is 
+        Ok stage1Pat ->
+            hit = Dict.get cache pattern  
+            tokensFromUserInputResult = 
+                when hit is 
+                    Ok tokens -> 
+                        Ok tokens
+                    Err _ -> 
+                        regexCreationStage2 pattern stage1Pat  []
+        
+            when tokensFromUserInputResult is 
+                Ok tokensFromUserInput ->
+                    
+                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
+                    # for now get longest maybe??
+                    (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
+                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
+                        if state.result == Bool.true then
+                            if List.len parsResult.matched > List.len state.matched  then 
+                                parsResult
+                            else 
+                                state
+                        else 
+                            parsResult ))
+                    |> ( \ parsed ->
+                        when hit is 
+                            Ok tokens ->
+                                 Ok { parsed : parsed, cache : cache }
+                            Err _ -> 
+                                Ok { parsed : parsed, cache : Dict.insert cache pattern tokensFromUserInput }
+                            ) 
+                Err message -> 
+                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
+
+        Err message -> 
+            Err  (Str.concat "This is internal regex error not your fault\n"  message )
+
 
 
 
