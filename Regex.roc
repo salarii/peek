@@ -1,5 +1,5 @@
 interface Regex
-    exposes [parseStr, parseStrCached, getValue, stagesCreationRegex, ParsingResultType, TokenType ]
+    exposes [parseStr, getValue, ParsingResultType, TokenType ]
     imports [Utils]
 
 
@@ -57,17 +57,16 @@ firstStagePatterns = [
         { tag : Whitespace, str : "\\s" },
         { tag : NoWhitespace, str : "\\S" }]
 
-auxOnly : Str
-auxOnly =  "T(((.+)))T"
-
-auxExcept : Str
-auxExcept =  "E(((.+)))E"
-
 
 secondStageHelperPatterns :  List  RecoverPatternType
 secondStageHelperPatterns = [
-    {tag : Except, str : "[^(.+)]" },
-    {tag : Only,  str : "[(.+)]" },
+    {tag : Except,  str : "H(.+)H" },
+]
+
+secondStagePatterns :  List  RecoverPatternType
+secondStagePatterns = [
+    {tag : Except, str : "[^(H]H+)]" },
+    {tag : Only,  str : "[(H]H+)]" },
 ]
 
 thirdStagePatterns: List  RecoverPatternType
@@ -75,16 +74,6 @@ thirdStagePatterns =  [
     { tag : BackSlash, str : "\\[.?{}^*]" },  # " #<- this artifact is serves for visual studio code 
     { tag : Repetition, str : "{(\\d)+}"},   #"   
     { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, #"
-    ]  # "
-
-
-secondStagePatterns: List  RecoverPatternType
-secondStagePatterns =  [
-    { tag : BackSlash, str : "\\T.?{}^*T" },  # " #<- this artifact is serves for visual studio code 
-    { tag : Repetition, str : "{(\\d)+}"},   #"   
-    { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, #"
-    { tag : Except, str : "[^(((.)-(.))|((\\T.?{}^*T))|((E]E)))+]" }, #"
-    { tag : Only, str : "[(((.)-(.))|((\\T.?{}^*T))|((E]E)))+]" } #"
     ]  # "
 
 firstStageChains : Result (List TokenPerRegexType ) Str
@@ -110,11 +99,15 @@ evalAndAppendChain = \ pattern, stageChain, onlyExceptChain ->
 secondStageHelperChains : Result (List TokenPerRegexType ) Str
 secondStageHelperChains = evalAndAppendChain secondStageHelperPatterns firstStageChains firstStageChains
 
+secondStageChains : Result (List TokenPerRegexType ) Str
+secondStageChains =  evalAndAppendChain  secondStagePatterns secondStageHelperChains (Ok regexSeedPattern)
+
 thirdStageChains : Result (List TokenPerRegexType ) Str
-thirdStageChains = evalAndAppendChain  thirdStagePatterns secondStageHelperChains (Ok regexSeedPattern)
+thirdStageChains = evalAndAppendChain  thirdStagePatterns secondStageChains (Ok regexSeedPattern)
 
 onlyExceptInternalChains : Result (List TokenPerRegexType ) Str
 onlyExceptInternalChains = createRegexFromData onlyExceptInternalPatterns secondStageHelperChains (Ok regexSeedPattern)
+
 
 
 priorities : Dict  RecoverRegexTagsType (Num a)    
@@ -135,11 +128,11 @@ priorities =
     |> Dict.insert NoAlphanumeric 1
     |> Dict.insert Whitespace 1
     |> Dict.insert NoWhitespace 1
-    |> Dict.insert Only 2
     |> Dict.insert BackSlash 2
     |> Dict.insert Repetition 2
     |> Dict.insert FromTo 2  
     |> Dict.insert RangeRepetition 2
+    |> Dict.insert Only 3
     |> Dict.insert Except 3
   
   
@@ -313,119 +306,24 @@ createRepetitionOutOfTree =  \ tree ->
         Err  _  ->  Err  ( Str.concat errMess " no values " )
 
 
-createExceptOutOfTree : TreeType -> Result TokenType Str
-createExceptOutOfTree =  \ tree ->
-    errMess = "Except token problem:  "
-    when Dict.get tree.content 0  is 
-        Ok head ->
-            searchResult = seekInTreeOnlyExcept head tree errMess
-            when  searchResult is 
-                Ok search  ->
-                    if List.isEmpty search.characterSet == Bool.false &&
-                        List.isEmpty search.limitRanges == Bool.false then
-                        chain =
-                            []
-                            |> List.append (CharacterSet search.characterSet)
-                            |> List.append (LimitRanges search.limitRanges)
-                            
-                        Ok (createToken (Except  chain) Once Bool.false )
-            
-                    else if List.isEmpty search.characterSet == Bool.false then 
-                        Ok (createToken (Except [CharacterSet search.characterSet]) Once Bool.false ) 
-                    else if List.isEmpty search.limitRanges == Bool.false then
-                        Ok (createToken (Except [LimitRanges search.limitRanges]) Once Bool.false )
-                    else 
-                        Err (Str.concat errMess "empty tree") 
-                    
-                Err message -> Err message
-        Err _ -> Err  (Str.concat errMess "not right format of tree")
-
-
-seekInTreeOnlyExcept : TreeNodeType, TreeType, Str ->  Result  { characterSet : List U8, limitRanges : List { left : U8, right : U8 } } Str
-seekInTreeOnlyExcept = ( \ head, tree, errMess -> 
-    List.walk head.children (Ok { characterSet : [], limitRanges : [] }) ( \ stateOutResult, topChildIdId ->
-        when Dict.get tree.content topChildIdId is
-            Ok childHead ->
-                childResult =
-                    List.walk childHead.children (Ok { characterSet : [], limitRanges : [] }) ( \ state, childId ->
-                        when state is 
-                            Ok items ->
-                                    
-                                when getDirectlyChildrenCnt tree childId is 
-                                    Ok  cnt ->
-                                            if cnt == 1 then 
-                                                when  (getValue [0] childId tree) is 
-                                                    Ok val -> 
-                                                        when val is 
-                                                            [ '\\', secVal ] ->
-                                                                Ok { items & characterSet :  List.append items.characterSet  secVal  }
-                                                            _ -> 
-                                                                Ok { items & characterSet :  List.concat items.characterSet  val  }
-                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value" )
-
-                                            else if cnt == 2 then
-                                                getFirst = (\  valLst ->
-                                                    when List.first valLst is 
-                                                        Ok val -> Ok val
-                                                        Err _ -> Err  "no value"
-                                                    )
-                                                                            
-                                                when (getValue [0] childId tree) is    
-                                                    Ok val1Lst -> 
-                                                        when getFirst val1Lst is
-                                                            Ok val1 ->
-                                                                when (getValue [1] childId tree)  is
-                                                                    Ok val2Lst ->
-                                                                        when getFirst val2Lst is
-                                                                            Ok val2 -> 
-                                                                                Ok { items & limitRanges :  List.append items.limitRanges  { left : val1, right : val2 } }
-                                                                                
-                                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
-                                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 2" )
-                                                            Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
-                                                            
-                                                    Err _ -> Err (Str.concat errMess "wrong second level child structure, missing value 1" )
-
-                                            else 
-                                                Err (Str.concat errMess "wrong second level child structure" )
-                                    Err _ -> Err (Str.concat errMess "wrong second level child structure" )
-                                        
-                            Err  message -> Err  message  
-                        )
-                when stateOutResult is 
-                    Ok stateOut ->
-                        when childResult is 
-                            Ok result ->
-                                Ok { characterSet : List.concat  result.characterSet stateOut.characterSet,
-                                limitRanges : List.concat result.limitRanges stateOut.limitRanges}        
-                            Err  message -> Err  message    
-                    Err  message -> Err  message         
-                
-            Err  _ -> Err (Str.concat errMess "wrong structure" )  
-            ))
-
-mergeTokens : List TokenType -> Result (List TokenType ) Str
+mergeTokens : List TokenType -> Result (List SearchRegexTagsType ) Str
 mergeTokens = \ lst ->
-    dzynks =
-        List.walk lst (Ok {characterSet :createToken (CharacterSet []) Once Bool.false , limitRanges : createToken (LimitRanges []) Once Bool.false } ) ( \ stateResult, token ->
+    List.walk lst (Ok {characterSet :CharacterSet [], limitRanges : LimitRanges [] } ) ( \ stateResult, token ->
             when  stateResult is 
                 Ok state ->
                     when token.tag is 
                         Character char  -> 
-                            currentCharSet = state.characterSet
-                            
-                            when state.characterSet.tag is 
+                            when state.characterSet is 
                                 CharacterSet chars ->
-                                    Ok { state &  characterSet : { currentCharSet & tag : CharacterSet ( List.append chars char )} }
+                                    Ok { state &  characterSet : CharacterSet ( List.append chars char ) } 
                                 _ -> Err  "problem in merging tokens"   
                             
                         LimitRanges  ranges ->
                             when ranges is 
                                 [ range ]  ->
-                                    currentLimitRang = state.limitRanges
-                                    when state.limitRanges.tag is 
+                                    when state.limitRanges is 
                                         LimitRanges inRanges ->
-                                            Ok { state &  limitRanges : { currentLimitRang & tag : LimitRanges ( List.append inRanges range )} }
+                                            Ok { state &  limitRanges : LimitRanges ( List.append inRanges range ) }
                                         _ -> Err  "problem in merging tokens"     
                                 _ -> Err  "problem in merging tokens"    
                         _ ->  Err  "problem in merging tokens"
@@ -434,65 +332,25 @@ mergeTokens = \ lst ->
         |> ( \ mergedResult ->
             when mergedResult is
                 Ok merged  ->
-                    when merged.characterSet.tag is 
-                        CharacterSet chars ->
-                            (
-                                when chars is 
-                                    [] ->
-                                        []
-                                    _ ->
-                                        [merged.characterSet])
-                                |> ( \ tokens ->
-                                    when merged.limitRanges.tag is
-                                        LimitRanges ranges -> 
-                                            when ranges is
-                                                [] ->
-                                                    Ok tokens
-                                                _ ->  
-                                                    Ok (List.append tokens merged.limitRanges)
-                                                    
-                                        _ -> Err  "problem in merging tokens")
-                        _ ->  Err  "problem in merging tokens"
-                            
+                    CharacterSet chars = merged.characterSet
+                    (when chars is 
+                        [] ->
+                            []
+                        _ ->
+                            [ CharacterSet chars]
+                            #[merged.characterSet]   <--- this  does  not work  I consider  it a bug 
+                    )        
+                    |> ( \ tokens ->
+                        LimitRanges ranges = merged.limitRanges
+                        when ranges is
+                            [] ->
+                                Ok tokens
+                            _ ->  
+                                Ok (List.append tokens (LimitRanges ranges))
+                            )                            
                 Err message -> Err message 
                 )
-    Err "asdas"
 
-
-    #        Err message -> Err message  )
-
-createOnlyOutOfTree : TreeType -> Result TokenType Str    
-createOnlyOutOfTree =  \ tree ->
-    errMess = "Only token problem:  "
-    when Dict.get tree.content 0  is 
-        Ok head ->
-            searchResult = seekInTreeOnlyExcept head tree errMess
-            when  searchResult is 
-                Ok search  ->
-                    if List.isEmpty search.characterSet == Bool.false &&
-                        List.isEmpty search.limitRanges == Bool.false then
-                        chain =
-                            []
-                            |> List.append (createToken CaptureOpen Once Bool.false )
-                            |> List.append (createToken (CharacterSet search.characterSet) Once Bool.false )
-                            |> List.append (createToken CaptureClose Once Bool.false )
-                            |> List.append (createToken Separator Once Bool.false )
-                            |> List.append (createToken CaptureOpen Once Bool.false )
-                            |> List.append (createToken (LimitRanges search.limitRanges) Once Bool.false )
-                            |> List.append (createToken CaptureClose Once Bool.false )
-                            
-                        Ok (createToken (Sequence  chain) Once Bool.false )
-        
-                    else if List.isEmpty search.characterSet == Bool.false then 
-                        Ok (createToken (CharacterSet search.characterSet) Once Bool.false ) 
-                    else if List.isEmpty search.limitRanges == Bool.false then
-                        Ok (createToken (LimitRanges search.limitRanges) Once Bool.false )
-                    else 
-                        Err (Str.concat errMess "empty tree") 
-                    
-                Err message -> Err message
-        Err _ -> Err  (Str.concat errMess "not right format of tree")
-        
 
 
 composeMatchedStructure :  TreeType, I32, [CaptureOpen, CaptureClose] -> TreeType 
@@ -932,49 +790,58 @@ checkMatching = \ utfLst, reg  ->
         
         if state.result == Bool.true then
             if List.len updatedParsResult.matched > List.len state.matched  then 
-
                 updatedParsResult
-            else if List.len updatedParsResult.matched == List.len state.matched &&
-                cntLivesValues  updatedParsResult.captured 0 < cntLivesValues state.captured 0 then 
-                updatedParsResult  #  this  is a bit silly, used only as  workaround 
             else 
                 state
         else 
             updatedParsResult )
 
-printMe : List  TokenType -> Str
-printMe = (  \ arrayPrt ->
-    List.walk arrayPrt "" (  \ inState , token ->
-        when  token.tag  is 
+
+printTag : SearchRegexTagsType -> Str
+printTag = (  \ tag ->
+
+        when  tag  is 
             Character  val -> 
                 extractedChar = 
                     when Str.fromUtf8 [val] is 
                         Ok str -> str
                         Err _ -> "  some weird problem in  extracting character token "
-                Str.concat inState "\n"
+                "\n"
                 |> Str.concat  "character : "
                 |> Str.concat  extractedChar  
-            Dot ->
-                Str.concat inState "\nDot"
+            Dot -> "\nDot"
             CaptureOpen ->
-                Str.concat inState "\nCapture  Open"
+                "\nCapture  Open"
             CaptureClose ->
-                Str.concat inState "\nCapture  Close"
+                "\nCapture  Close"
             Separator ->
-                Str.concat inState "\nSeparator"
+                "\nSeparator"
             Sequence  array  ->    
-                Str.concat inState "\nseq : -> " 
-                |> Str.concat (printMe array)
+                "\nseq : -> " 
+                |> Str.concat (printTokens array)
                 |> Str.concat "\nexit sequence  <- "
-            Digit -> Str.concat inState "\nDigit"
-            NoDigit -> Str.concat inState "\nNo Digit"
+            Digit -> "\nDigit"
+            NoDigit -> "\nNo Digit"
             CharacterSet _ -> 
-                Str.concat inState "\nCharacter set"  
-            LimitRanges _ -> Str.concat inState "\nLimit Ranges set"
-            ReverseLimitRanges _ -> Str.concat inState "\nReverse limit Ranges"
-            Except _ -> Str.concat inState "\nExcept"
+                "\nCharacter set"  
+            LimitRanges _ -> "\nLimit Ranges set"
+            ReverseLimitRanges _ -> "\nReverse limit Ranges"
+            Except tags -> 
+                "\nExcept:"
+                |> Str.concat (List.walk tags "" (\ print, inTag ->
+                    Str.concat print (printTag inTag) ))
+            Only tags -> 
+                "\nOnly:"
+                |> Str.concat (List.walk tags "" (\ print, inTag ->
+                    Str.concat print (printTag inTag) ))
             _ -> 
                 "\n unknown token "
+        )
+
+printTokens : List  TokenType -> Str
+printTokens = (  \ arrayPrt ->
+    List.walk arrayPrt "" (  \ inState , token ->
+        Str.concat  inState (printTag token.tag)
         )
 )
 checkMatchingValidity : ParsingResultType -> Bool
@@ -1153,7 +1020,6 @@ regexCreationStage2  = \ str, patterns, onlyExceptPatterns, currReg ->
                                     Ok { lst : modifLastInChain state.lst (createToken CaptureClose Once Bool.false), capture : state.capture - 1 }
                                 Separator -> 
                                     Ok { state &  lst : modifLastInChain state.lst (createToken Separator Once Bool.false )  }
-                                
                                 Digit ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken Digit Once (doCapture state.capture) )  }
                                 NoDigit ->
@@ -1169,19 +1035,45 @@ regexCreationStage2  = \ str, patterns, onlyExceptPatterns, currReg ->
                                 NoWhitespace ->
                                     Ok { state &  lst : modifLastInChain state.lst (createToken (NotInCharacterSet [0x20, 0x09, 0x0D, 0x0A]) Once (doCapture state.capture) ) }
                                 FromTo ->
-                                    Ok state
+                                    when (getValue [0] 0 result.parsedResult.captured, 
+                                        getValue [1] 0 result.parsedResult.captured ) is
+                                        ( Ok fromLst, Ok  toLst ) ->
+                                            when (fromLst,  toLst) is
+                                                ([left], [right] ) ->
+                                                    Ok { state &  lst : modifLastInChain state.lst (createToken (LimitRanges [ { left : left, right : right } ]) Once Bool.false )  }
+                                                _ -> Err "problem creation range block"      
+                                        _ -> Err "problem creation range block"
+
                                 Only ->
-                                    when createOnlyOutOfTree result.parsedResult.captured is
-                                        Ok onlyToken -> 
-                                            Ok { state &  lst : modifLastInChain state.lst {onlyToken & capture : (doCapture state.capture) }  }
-                                        Err message ->
-                                            Err message
+                                    when (getValue [0] 0 result.parsedResult.captured) is
+                                        Ok lst ->
+                                            when regexCreationStage2 (Utils.utfToStr lst) onlyExceptPatterns onlyExceptPatterns [] is 
+                                                Ok tokensResult ->
+                                                    when mergeTokens tokensResult is 
+                                                        Ok tagLst ->
+                                                            
+                                                            Ok { state &  lst : modifLastInChain state.lst (createToken (Only tagLst) Once (doCapture state.capture) ) }  
+                                                        Err message -> Err message  
+                                                        
+                                                Err message -> Err message 
+                                                                        
+                                        Err _ -> Err "problem creation only block"
+
                                 Except ->
-                                    when createExceptOutOfTree result.parsedResult.captured is
-                                        Ok exceptionToken ->
-                                            Ok { state &  lst : modifLastInChain state.lst {exceptionToken & capture : (doCapture state.capture) } }
-                                        Err message ->
-                                            Err message
+                                    when (getValue [0] 0 result.parsedResult.captured) is
+                                        Ok lst ->
+                                            when regexCreationStage2 (Utils.utfToStr lst) onlyExceptPatterns onlyExceptPatterns [] is 
+                                                Ok tokensResult ->
+                                                    when mergeTokens tokensResult is 
+                                                        Ok tagLst ->
+                                                            
+                                                            Ok { state &  lst : modifLastInChain state.lst (createToken (Except tagLst) Once (doCapture state.capture) ) }  
+                                                        Err message -> Err message  
+                                                        
+                                                Err message -> Err message 
+                                                                        
+                                        Err _ -> Err "problem creation except block"
+
                                 BackSlash->
                                     when result.parsedResult.matched is 
                                         [backslash, sign ] ->
@@ -1242,7 +1134,7 @@ createRegexFromData : List  RecoverPatternType, Result ( List  TokenPerRegexType
 createRegexFromData = \ inRegexData, regexBase, onlyExceptBase -> 
     when (regexBase, onlyExceptBase) is 
         (Ok base, Ok onlyExcept) ->
-            List.walkUntil  secondStagePatterns (Ok []) ( \ state, pat  ->
+            List.walkUntil  inRegexData (Ok []) ( \ state, pat  ->
                 when state is 
                     Ok currentPatterns ->
                         patternResult = regexCreationStage2 pat.str base onlyExcept []
@@ -1254,50 +1146,6 @@ createRegexFromData = \ inRegexData, regexBase, onlyExceptBase ->
                     )
                     
         _ -> Err "error in regex patterns creation"
-
-
-stagesCreationRegex : List * -> Result  ( List  TokenPerRegexType ) Str
-stagesCreationRegex  = \ _param -> 
-    #dbg  "avail"
-    # this is not really needed 
-    # all patterns could be placed in regexSeedPattern right out of the bat (in token form)
-    # but this approach has some benefits:
-    # - quite decent self validation during development
-    # - additional restrictions which limit unbounded sea of possibilities during design phase
-    # - patterns are easy to recognize from their's string form
-    stage1 = regexCreationStage firstStagePatterns regexSeedPattern
-    when stage1 is 
-        Ok stage1Pat ->
-            patternAuxOnlyResult = regexCreationStage2 auxOnly stage1Pat stage1Pat []
-            patternAuxExceptResult = regexCreationStage2 auxExcept stage1Pat stage1Pat [] 
-            when (patternAuxOnlyResult, patternAuxExceptResult) is 
-                (Ok patternAuxOnly, Ok patternAuxExcept )->
-                    stage2Pat = 
-                        stage1Pat
-                        |> List.append  { tag : Only, tokens : patternAuxOnly }
-                        |> List.append  { tag : Except, tokens : patternAuxExcept }
-                        
-                    List.walkUntil  secondStagePatterns (Ok stage1Pat) ( \ state, pat  ->
-                        when state is 
-                            Ok currentPatterns ->
-
-                                patternResult = regexCreationStage2 pat.str stage2Pat stage2Pat []
-
-                                when patternResult is 
-                                    Ok pattern ->
-
-                                        Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
-                                    Err message -> Break (Err message)
-                            Err message -> Break (Err message)
-                    )
-                    
-                _-> Err "Only, except auxiliary patterns error"   
-
-        Err message -> Err message
-
-# there is quite serious performance problem 
-availableRegex : Result ( List  TokenPerRegexType ) Str
-availableRegex = stagesCreationRegex [] 
 
  
 parseStr : Str, Str -> Result ParsingResultType  Str
@@ -1315,7 +1163,6 @@ parseStr = \ str, pattern ->
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
                 
-                    
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
                     # for now get longest maybe??
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
@@ -1335,44 +1182,44 @@ parseStr = \ str, pattern ->
         #    Err  (Str.concat "This is internal regex error not your fault\n"  message )
 
 
-parseStrCached : Str, Str, Dict Str (List TokenType)-> Result {parsed : ParsingResultType,cache: Dict Str (List TokenType) }  Str
-parseStrCached = \ str, pattern, cache -> 
-    when availableRegex is 
-        Ok stage1Pat ->
-            hit = Dict.get cache pattern  
-            tokensFromUserInputResult = 
-                when hit is 
-                    Ok tokens -> 
-                        Ok tokens
-                    Err _ -> 
-                        regexCreationStage2 pattern stage1Pat stage1Pat []
+#parseStrCached : Str, Str, Dict Str (List TokenType)-> Result {parsed : ParsingResultType,cache: Dict Str (List TokenType) }  Str
+#parseStrCached = \ str, pattern, cache -> 
+#    when availableRegex is 
+#        Ok stage1Pat ->
+#            hit = Dict.get cache pattern  
+#            tokensFromUserInputResult = 
+#                when hit is 
+#                    Ok tokens -> 
+#                        Ok tokens
+#                    Err _ -> 
+#                        regexCreationStage2 pattern stage1Pat stage1Pat []
         
-            when tokensFromUserInputResult is 
-                Ok tokensFromUserInput ->
+#            when tokensFromUserInputResult is 
+#                Ok tokensFromUserInput ->
                     
-                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
+#                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
                     # for now get longest maybe??
-                    (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
-                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
-                        if state.result == Bool.true then
-                            if List.len parsResult.matched > List.len state.matched  then 
-                                parsResult
-                            else 
-                                state
-                        else 
-                            parsResult ))
-                    |> ( \ parsed ->
-                        when hit is 
-                            Ok tokens ->
-                                 Ok { parsed : parsed, cache : cache }
-                            Err _ -> 
-                                Ok { parsed : parsed, cache : Dict.insert cache pattern tokensFromUserInput }
-                            ) 
-                Err message -> 
-                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
+#                    (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
+#                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
+#                        if state.result == Bool.true then
+#                            if List.len parsResult.matched > List.len state.matched  then 
+#                                parsResult
+#                            else 
+#                                state
+#                        else 
+#                            parsResult ))
+#                    |> ( \ parsed ->
+#                        when hit is 
+#                            Ok tokens ->
+#                                 Ok { parsed : parsed, cache : cache }
+#                            Err _ -> 
+#                                Ok { parsed : parsed, cache : Dict.insert cache pattern tokensFromUserInput }
+ #                           ) 
+ #               Err message -> 
+ #                   Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
 
-        Err message -> 
-            Err  (Str.concat "This is internal regex error not your fault\n"  message )
+  #      Err message -> 
+  #          Err  (Str.concat "This is internal regex error not your fault\n"  message )
 
 
 
