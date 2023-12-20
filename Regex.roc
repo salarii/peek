@@ -77,7 +77,8 @@ thirdStagePatterns =  [
     ]  # "
 
 firstStageChains : Result (List TokenPerRegexType ) Str
-firstStageChains = regexCreationStage firstStagePatterns regexSeedPattern  
+firstStageChains = evalAndAppendChain firstStagePatterns (Ok regexSeedPattern) (Ok regexSeedPattern)
+
 
 onlyExceptInternalPatterns : List  RecoverPatternType
 onlyExceptInternalPatterns = [
@@ -864,48 +865,9 @@ getRegexTokens = \ result  ->
         _ -> 
             Err "wrong tag"
 
-regexCreationStage :  List RecoverPatternType,  List TokenPerRegexType -> Result (List TokenPerRegexType ) Str
-regexCreationStage = \ inPatterns, ignitionPatterns ->
 
-    regPatterns = 
-        List.walk inPatterns (Ok []) ( \ state, pat->
-            when state is 
-                Ok patterns -> 
-                    when evalRegex (Str.toUtf8  pat.str ) ignitionPatterns [] is 
-                        Ok results ->
-                            
-                            List.walk  results (Ok []) ( \ inState, result ->
-                                when inState is 
-                                    Ok patLst ->
-                                        when  getRegexTokens result is 
-                                            Ok tokens -> 
-                                                workaround = 
-                                                    List.walk  tokens [] ( \ workState, token -> 
-                                                        List.append workState (createToken token.tag token.serie  token.capture) )
-                                                # !!!!!!!!!!! crashes  here Ok [{ tag : pat.tag, tokens : tokens }]
-                                                Ok (List.concat patLst  workaround  )    
-
-                                            Err message -> Err message 
-                                    Err  message -> Err message     
-                                
-                            )
-                            |> (\ inTokensResult ->
-                                when  inTokensResult is 
-                                    Ok inTokens ->  
-                                        Ok ( List.append patterns { tag : pat.tag, tokens : inTokens } )
-                                    Err message ->  Err message )
-
-                        Err Empty ->  Err "Empty" 
-                        Err NoTokens ->  Err "NoTokens"
-                        Err PriorityListErr ->  Err "PriorityListErr"
-                Err message ->  Err message )
-    when regPatterns is 
-        Ok patterns ->
-            Ok  ( List.concat  ignitionPatterns  patterns )
-        Err  message  -> Err  message 
-
-regexCreationStage2 : Str, List TokenPerRegexType, List TokenPerRegexType, List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} -> Result ( List TokenType )  Str
-regexCreationStage2  = \ str, patterns, onlyExceptPatterns, currReg ->
+regexCreationStage : Str, List TokenPerRegexType, List TokenPerRegexType, List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} -> Result ( List TokenType )  Str
+regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
     ( evalRegex (Str.toUtf8  str) patterns currReg )
     |> ( \ resultSet -> 
         when resultSet is
@@ -1047,7 +1009,7 @@ regexCreationStage2  = \ str, patterns, onlyExceptPatterns, currReg ->
                                 Only ->
                                     when (getValue [0] 0 result.parsedResult.captured) is
                                         Ok lst ->
-                                            when regexCreationStage2 (Utils.utfToStr lst) onlyExceptPatterns onlyExceptPatterns [] is 
+                                            when regexCreationStage (Utils.utfToStr lst) onlyExceptPatterns onlyExceptPatterns [] is 
                                                 Ok tokensResult ->
                                                     when mergeTokens tokensResult is 
                                                         Ok tagLst ->
@@ -1062,7 +1024,7 @@ regexCreationStage2  = \ str, patterns, onlyExceptPatterns, currReg ->
                                 Except ->
                                     when (getValue [0] 0 result.parsedResult.captured) is
                                         Ok lst ->
-                                            when regexCreationStage2 (Utils.utfToStr lst) onlyExceptPatterns onlyExceptPatterns [] is 
+                                            when regexCreationStage (Utils.utfToStr lst) onlyExceptPatterns onlyExceptPatterns [] is 
                                                 Ok tokensResult ->
                                                     when mergeTokens tokensResult is 
                                                         Ok tagLst ->
@@ -1137,7 +1099,7 @@ createRegexFromData = \ inRegexData, regexBase, onlyExceptBase ->
             List.walkUntil  inRegexData (Ok []) ( \ state, pat  ->
                 when state is 
                     Ok currentPatterns ->
-                        patternResult = regexCreationStage2 pat.str base onlyExcept []
+                        patternResult = regexCreationStage pat.str base onlyExcept []
                         when patternResult is 
                             Ok pattern ->
                                 Continue (Ok ( List.append currentPatterns { tag : pat.tag, tokens : pattern }))
@@ -1155,10 +1117,10 @@ parseStr = \ str, pattern ->
     #    Ok stage1Pat ->
         (Ok mainRegex, Ok onlyExceptRegex) ->
 
-            tokensFromUserInputResult = regexCreationStage2 pattern mainRegex onlyExceptRegex []
+            tokensFromUserInputResult = regexCreationStage pattern mainRegex onlyExceptRegex []
 
 
-            #tokensFromUserInputResult = regexCreationStage2 pattern stage1Pat stage1Pat []
+            #tokensFromUserInputResult = regexCreationStage pattern stage1Pat stage1Pat []
 
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
@@ -1192,7 +1154,7 @@ parseStr = \ str, pattern ->
 #                    Ok tokens -> 
 #                        Ok tokens
 #                    Err _ -> 
-#                        regexCreationStage2 pattern stage1Pat stage1Pat []
+#                        regexCreationStage pattern stage1Pat stage1Pat []
         
 #            when tokensFromUserInputResult is 
 #                Ok tokensFromUserInput ->
