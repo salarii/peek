@@ -2,17 +2,17 @@ interface Utils
     exposes [asciiArrayToNumber, tokenize, utfToStr]
     imports []
 
-NumType : I32
-conversionFun : (Str -> Result NumType [InvalidNumStr])
-conversionFun = Str.toI32
+#NumType : I32
+#conversionFun : (Str -> Result NumType [InvalidNumStr])
+#conversionFun = Str.toI32
 
 
-asciiArrayToNumberr : List U8 -> NumType
-asciiArrayToNumberr = \ lst -> 
-    Str.fromUtf8 lst
-    |> Result.withDefault "0"
-    |> conversionFun
-    |> Result.withDefault 0
+#asciiArrayToNumberr : List U8 -> NumType
+#asciiArrayToNumberr = \ lst -> 
+#    Str.fromUtf8 lst
+#    |> Result.withDefault "0"
+#    |> conversionFun
+#    |> Result.withDefault 0
 
 
 
