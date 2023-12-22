@@ -797,6 +797,18 @@ checkMatching = \ utfLst, reg  ->
         else 
             updatedParsResult )
 
+printSerie : SerieType  -> Str
+printSerie = ( \ serie ->
+    when serie is
+        AtLeastOne -> "\nAtLeastOne"
+        ZeroOrMore -> "\nZeroOrMore"
+        MNTimes _ _ -> "\nMNTimes"
+        NoMorethan _ -> "\nNoMorethan"
+        NTimes _ -> "\nNTimes"
+        Once -> "\nOnce"
+        _ ->  "\nUnknown serie"
+        
+)
 
 printTag : SearchRegexTagsType -> Str
 printTag = (  \ tag ->
@@ -843,6 +855,7 @@ printTokens : List  TokenType -> Str
 printTokens = (  \ arrayPrt ->
     List.walk arrayPrt "" (  \ inState , token ->
         Str.concat  inState (printTag token.tag)
+        |> Str.concat (printSerie token.serie)
         )
 )
 checkMatchingValidity : ParsingResultType -> Bool
@@ -879,7 +892,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                             doCapture = \ capture  ->
                                 capture > 0
                             
-                            
+                            modifLastInChain : List TokenType, TokenType -> List TokenType
                             modifLastInChain = (\ chainLst, token ->
                                 when List.last chainLst is 
                                     Ok elem ->
@@ -900,8 +913,6 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                                                 Err _ ->     
                                                                         lst
                                                                         )
-                                                                    
-                                                            
                                                         when token.tag is 
                                                             CaptureClose ->
                                                                 closeLast chainLst (Sequence chain) 
@@ -917,51 +928,95 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                         List.append chainLst token
                                         
                             )
-                            # those two functions below exist because of some failures in design
-                            createUpdatedToken = ( \ token, cnt, op,  tokens ->
-                                        when token is
-                                            Ok elem ->
-                                                when elem.tag is
-                                                    Sequence chain ->
-                                                        createUpdatedToken  (List.last chain)  cnt op (List.append tokens elem)      
-                                                    _ ->
-                                                        List.append tokens elem
-                                                        |> List.dropLast cnt
-                                                        |> List.walkBackwards  (Err "internal error during  + evaluation ") (  \ createResult , elemToken   -> 
-                                                            when elemToken.tag is
-                                                                Sequence chain ->
-                                                                    when chain is 
-                                                                        [.., elemChain ] ->
-                                                                            when createResult is 
-                                                                                Ok updatedToken ->
-                                                                                    Ok (createToken (Sequence (modifyLastInList chain updatedToken)) elemToken.serie elemToken.capture )
-                                                                                _ ->
-                                                                                    Ok ( op elemToken )
-                                                                        [] -> Err " wrong + usage "
-                                                                _->
-                                                                    Ok ( op elemToken ))
-                                               
-                                            Err  _ ->  Err " wrong + usage "
-                                    )
+                            
+                            updateSerie : TokenType, SerieType -> Result TokenType Str                            
+                            updateSerie = \ token, serie -> 
+                                when token.serie is
+                                    Once -> 
+                                        Ok { token  & serie : serie }
+                                        
+                                    _ -> Err "Wrong usage of +/*/Repetition/? in pattern"        
                                     
-                            omitCaptureEnd = ( \ inLst, op, cnt -> 
-                                        when List.last inLst is
-                                            Ok elem ->
-                                                when elem.tag is 
-                                                    CaptureClose ->
-                                                        when omitCaptureEnd ( List.dropLast inLst  1) op (cnt +1) is 
-                                                            Ok updatedLst ->
-                                                                Ok (
-                                                                    List.append updatedLst elem)
-                                                            Err message -> Err message 
-                                                    _ ->
-                                                        when  createUpdatedToken (Ok elem)  cnt op [] is
-                                                            Ok updatedLast ->  Ok ( modifyLastInList inLst updatedLast )
-                                                            Err  message -> Err  message  
+                                    
+                            # bit weird  but keep it for now  
+                            updateSerieIfApplicable : List TokenType, SerieType -> Result ( List TokenType )  Str         
+                            updateSerieIfApplicable = ( \ outLst, outSerie -> 
+                                        
+                                updateSerieIfApplicableInternal : List TokenType, SerieType, Nat, List  TokenType  -> Result ( List TokenType )  Str         
+                                updateSerieIfApplicableInternal = ( \ inLst, serie, cnt, sequences ->         
+                                    when List.last inLst is
+                                        Ok token ->
+                                            when token.tag is 
+                                                CaptureClose -> 
+                                                    updatedSeq =
+                                                        when sequences is
+                                                            [..,lastSeq] ->
+                                                                when lastSeq.tag is 
+                                                                    Sequence chain  ->
+                                                                        # with good synchronization it should be ok 
+                                                                        List.dropLast chain 1
+                                                                        |> ( \updatedChain ->
+                                                                            modifyLastInList sequences (createToken (Sequence updatedChain) lastSeq.serie lastSeq.capture ))
+                                                                    _ -> sequences
+                                                            []  ->  []
+                                                           
+                                                    when updateSerieIfApplicableInternal ( List.dropLast inLst  1) serie (cnt + 1) updatedSeq is 
+                                                        Ok updatedLst ->
+                                                            Ok (modifLastInChain updatedLst token)
+                                                        Err message -> Err message
+                                                Sequence chain ->
+                                                    if List.isEmpty sequences then
                                                         
-                                                
-                                            Err _ -> Err "Wrong usage of +/*/Repetition/? in pattern"        
-                                        )
+                                                        when updateSerieIfApplicableInternal chain serie cnt (List.append sequences token) is
+                                                            Ok rolledSeqStack->
+                                                                
+                                                                Ok (
+                                                                    List.dropLast inLst 1 
+                                                                    |> List.concat  rolledSeqStack)
+                                                            Err message -> Err message
+                                                    else
+                                                        updateSerieIfApplicableInternal chain serie  cnt (List.append sequences token)
+                                                _ ->
+                                                    if List.isEmpty sequences then 
+                                                        when updateSerie token serie is
+                                                            Ok updatedtoken ->
+                                                                Ok (modifyLastInList inLst updatedtoken)
+                                                            Err message -> Err message
+                                                    else         
+                                                        if cnt > 0 then
+                                                            List.dropLast sequences (cnt - 1)
+                                                            |> List.walkBackwards (Err "internal error during +/*/Repetition/? evaluation ") (  \ createResult , elemToken   -> 
+                                                                when elemToken.tag is
+                                                                    Sequence chain ->
+                                                                        when  createResult is 
+                                                                            Ok updatedSeqLst ->
+                                                                                when updatedSeqLst is 
+                                                                                    [ updatedSeq ] -> Ok [createToken (Sequence (modifyLastInList chain updatedSeq)) elemToken.serie elemToken.capture ]
+                                                                                    _ -> Err "Wrong usage of +/*/Repetition/? in pattern"
+                                                                            _-> Ok [createToken (Sequence chain) serie elemToken.capture ]
+                                                                    _->
+                                                                        Err "Wrong usage of +/*/Repetition/? in pattern" )          
+                                                        else
+                                                            List.walkBackwards sequences (Err "internal error during +/*/Repetition/? evaluation ") (\ createResult, elemToken -> 
+                                                                
+                                                                when elemToken.tag is
+                                                                    Sequence chain ->
+                                                                        when  createResult is 
+                                                                            Ok updatedSeqLst ->
+                                                                                when updatedSeqLst is 
+                                                                                    [ updatedSeq ] -> Ok [createToken (Sequence (modifyLastInList chain updatedSeq)) elemToken.serie elemToken.capture ]
+                                                                                    _ -> Err "Wrong usage of +/*/Repetition/? in pattern"
+                                                                            _ -> 
+                                                                                when (updateSerieIfApplicableInternal chain serie 0 []) is
+                                                                                    Ok updatedChain ->
+                                                                                        Ok [createToken (Sequence updatedChain) elemToken.serie elemToken.capture ]
+                                                                                    Err message -> Err message 
+                                                                    _-> 
+                                                                        Err "Wrong usage of +/*/Repetition/? in pattern" )
+                                        Err _ -> Err  "Wrong usage of +/*/Repetition/? in pattern" 
+                                    )
+                                updateSerieIfApplicableInternal outLst outSerie 0 [] )                                 
+                                                    
                  
                             when  result.tag is 
                                 Character ->
@@ -1045,7 +1100,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                 Repetition ->
                                     when createRepetitionOutOfTree result.parsedResult.captured is
                                         Ok serie -> 
-                                            when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
+                                            when updateSerieIfApplicable state.lst serie is 
                                                 Ok newLst ->
                                                     Ok { state &  lst : newLst }
                                                 Err message -> Err message     
@@ -1055,26 +1110,26 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
 
                                     when createRepetitionOutOfTree result.parsedResult.captured is
                                         Ok serie -> 
-                                            when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : serie } )  0 is 
+                                            when updateSerieIfApplicable state.lst serie is 
                                                 Ok newLst ->
                                                     Ok { state &  lst : newLst }
                                                 Err message -> Err message                                              
                                         Err message ->
                                             Err message 
                                 ZeroOrMore ->                                            
-                                    when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : ZeroOrMore } )  0 is 
+                                    when updateSerieIfApplicable state.lst  ZeroOrMore is 
                                         Ok newLst ->
                                             Ok { state &  lst : newLst }
                                         Err message -> Err message  
                                 Optional ->
-                                     when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : (NoMorethan 1) } )  0 is 
+                                     when updateSerieIfApplicable state.lst ( NoMorethan 1 ) is 
                                         Ok newLst ->
                                             Ok { state &  lst : newLst }
                                         Err message -> Err message  
                                 AtLeastOne ->
                                     
 
-                                    when omitCaptureEnd state.lst ( \ inElem -> {inElem & serie : AtLeastOne } )  0 is 
+                                    when updateSerieIfApplicable state.lst (AtLeastOne) is 
                                         Ok newLst ->
                                             Ok { state &  lst : newLst }
                                         Err message -> Err message  
@@ -1124,7 +1179,6 @@ parseStr = \ str, pattern ->
 
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
-                
                     independentChainlst = splitChainOnSeparators tokensFromUserInput []
                     # for now get longest maybe??
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  

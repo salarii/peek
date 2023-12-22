@@ -10,7 +10,7 @@ app "testRegex"
 
 main =   
     kk =
-        when Regex.parseStr "vvvgnl@" "g[Nn][Ll]@" is 
+        when Regex.parseStr "white" "(u?white)" is 
             Ok parsed ->
                 dbg parsed.result 
                 parsed.result == Bool.false
@@ -592,10 +592,16 @@ expect
     when Regex.parseStr "c@pattern" "^[cC]@(.+)" is 
         Ok parsed ->
             parsed.result == Bool.true
-        Err mes -> mes == "test separator matching"  
+        Err mes -> mes == "bug only at front"  
 
 expect        
     when Regex.parseStr "nl@" "^[Nn][Ll]@$" is 
         Ok parsed ->
             parsed.result == Bool.true
-        Err mes -> mes == "test separator matching"  
+        Err mes -> mes == "bug two only sections"  
+
+expect
+when Regex.parseStr "white" "((u)?white)" is 
+            Ok parsed ->
+                parsed.result == Bool.true
+            Err mes -> mes == "bug optional on nested sequence" 
