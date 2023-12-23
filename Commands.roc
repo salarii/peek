@@ -79,7 +79,7 @@ createSection = \  parsResult, config ->
                                                 modifiers : Set.empty {},
                                                 patterns : [], 
                                                 }
-                                        [ 62 ] ->
+                                        [ 60 ] ->
                                             Ok {
                                                 command:
                                                     SearchSection
@@ -89,7 +89,7 @@ createSection = \  parsResult, config ->
                                                 modifiers : Set.empty {},
                                                 patterns : [], 
                                                 }
-                                        [ 60 ] -> 
+                                        [ 62 ] -> 
                                             Ok {
                                                 command:
                                                     SearchSection
@@ -175,21 +175,38 @@ handleOthers = \  parsResult, config ->
     when (Regex.getValue [0, 0] 0 parsResult.captured,
         Regex.getValue [0, 1] 0 parsResult.captured ) is
         (Ok modifiers, Ok pattern) ->
-            dbg "modif"
+            # bit arbitrary and messy but consider wrong command just pattern, (later meybe change  this to show worning)
             if List.isEmpty modifiers == Bool.true then
                 Ok { config & patterns : List.append config.patterns (Allow (Utils.utfToStr pattern)) }
+            else if List.isEmpty pattern == Bool.true then
+                Ok { config & patterns : List.append config.patterns (Allow (Utils.utfToStr modifiers)) }
             else
                 modifierAnalysis (Utils.utfToStr modifiers) { command : Search, modifiers : Set.empty {},patterns : [Allow (Utils.utfToStr pattern)] }
                 |> ( \ partialConfigResult ->
-                    dbg  "here"
                     when partialConfigResult is 
                         Ok partialConfig ->
                             { command: com, modifiers : mod, patterns : lst } = config
                             when com is
                                 Search -> Ok {command:  partialConfig.command, modifiers : mod, patterns :  List.concat lst partialConfig.patterns}
                                 _ -> Ok {config  & patterns : List.concat lst partialConfig.patterns}
-                        Err message -> Err message
-    )
+                        Err message -> Err message )
+                |> ( \ updatedConfigResult  ->  
+                    merged = 
+                            modifiers
+                            |> List.concat pattern
+                            |> Utils.utfToStr
+                    when updatedConfigResult is
+                        Ok updatedConfig -> 
+                            { command: com, modifiers : mod, patterns : lst } = updatedConfig
+                            when (com, lst) is 
+                                (Search, [Allow pat ]) ->
+                                    if (Utils.utfToStr pattern) == pat && Set.isEmpty mod == Bool.true then 
+                                        Ok { command : Search, modifiers : Set.empty {},patterns : [Allow merged] }
+                                    else
+                                        updatedConfigResult   
+                                _ -> updatedConfigResult
+                        Err message -> 
+                            Ok { command : Search, modifiers : Set.empty {},patterns : [Allow merged] } )
 
         _ -> Err "Error when processing \(Utils.utfToStr parsResult.matched) comand"
 
@@ -240,8 +257,8 @@ commandsToHandlers =
     |> Dict.insert "^[Nn][Ll]@" createNumberLines
     |> Dict.insert "([Rr])?@(.+)->([Rr])?@(.+)" createPatternToPattern
     |> Dict.insert "^(\\d+|s)->(\\d+|e)@$" createLineToLine
-    #|> Dict.insert "(([^@]+@)?(.*))" handleOthers
-    |> Dict.insert "((u)?white)" handleOthers
+    |> Dict.insert "(([^@]+@)?(.*))" handleOthers
+    
 simplifiedSyntax : Dict Str Str
 simplifiedSyntax = 
     Dict.empty {}
@@ -253,18 +270,14 @@ commandAnalysis = \ word, inState ->
     |> List.walkUntil (Ok inState) (\ state, pattern ->
         when state  is 
             Ok config -> 
-                dbg  "parse: "
-                dbg  word 
-                dbg  pattern
                 when Regex.parseStr word pattern is 
-                    Ok parsed ->
-                        dbg parsed.result  
+                    Ok parsed -> 
                         if parsed.result == Bool.true then
                             when Dict.get commandsToHandlers pattern  is
                                 Ok handler ->
                                     Break (handler parsed config)
                                 Err _ -> 
-                                    Break (Err "internal application error, during comand \(word) analysis")
+                                    Break (Err "command  \(word) evaluation error")
                         else 
                             Continue state
                     Err message -> Break (Err message)
@@ -285,33 +298,106 @@ recoverConfigFromInput = \filterStr ->
                     Err message ->  Break (Err message)
             Err message -> Break (Err message)
             ) 
-tryk  =  \ i ->
-    if i == 0 then
-        0
-    else 
-        dbg  recoverConfigFromInput  "^10r@pattern  r@osa->@kosa NL@"    
-        tryk  (i - 1)
-
-
-
-
 
 main = 
-    #Stdout.write  clearScreenPat |> Task.await
-    
+
     dbg  recoverConfigFromInput  "  white "  
-    
     Stdout.write  "Ok"
 
-#Str.toUtf8 "c@pattern"
-
+# rudimentary  tests
 expect
     when recoverConfigFromInput  "  white "    is 
         Ok config ->
-            dbg  config 
             config.patterns == [ Allow "white" ] && 
             Set.isEmpty config.modifiers == Bool.true  &&  
             config.command == Search     
         Err mes -> mes == "test search pattern"
         
-        # [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
+expect
+    when recoverConfigFromInput  "  b@white "    is 
+        Ok config ->
+            config.patterns == [ Blacklist "white" ] && 
+            Set.isEmpty config.modifiers == Bool.true  &&  
+            config.command == Search     
+        Err mes -> mes == "test search blacklist pattern"
+
+
+expect
+    when recoverConfigFromInput  "  bR@^@[6-7]white "    is 
+        Ok config ->
+            config.patterns == [ Regex (Blacklist "^@[6-7]white") ] && 
+            Set.isEmpty config.modifiers == Bool.true  &&  
+            config.command == Search     
+        Err mes -> mes == "test search regex pattern"
+
+
+expect
+    when recoverConfigFromInput  " white Nl@ "    is 
+        Ok config ->
+            dest = 
+                Set.empty {}
+                |> Set.insert NumberLines
+
+            config.patterns == [ Allow "white" ] && 
+            config.modifiers == dest &&  
+            config.command == Search     
+        Err mes -> mes == "test modifier number lines"
+
+
+expect
+    when recoverConfigFromInput  "  fsflN@ "    is 
+        Ok config ->
+            config.patterns == [ Allow "fsflN@" ]  &&
+            Set.isEmpty  config.modifiers == Bool.true &&  
+            config.command == Search     
+        Err mes -> mes == "test invalid command, empty pattern"
+
+expect
+    when recoverConfigFromInput  "  fsflN@tt "    is 
+        Ok config ->
+            config.patterns == [ Allow "fsflN@tt" ]  &&
+            Set.isEmpty  config.modifiers == Bool.true &&  
+            config.command == Search     
+        Err mes -> mes == "test invalid command"
+
+expect
+    when recoverConfigFromInput  " r@osa->@kosa white"    is 
+        Ok config ->
+            config.patterns == [Allow "white"]  &&
+            Set.isEmpty  config.modifiers == Bool.true &&  
+            config.command == FromPatternToPattern (Regex (Allow "osa")) (Allow "kosa")     
+        Err mes -> mes == "test from pattern to pattern"
+
+expect
+    when recoverConfigFromInput  " s->1000@  white"    is 
+        Ok config ->
+            config.patterns == [Allow "white"]  &&
+            Set.isEmpty  config.modifiers == Bool.true &&  
+            config.command == FromLineToLine 0 1000    
+        Err mes -> mes == "test from start to 1000 "
+
+expect
+    when recoverConfigFromInput  " 100->e@  white"    is 
+        Ok config ->
+            config.patterns == [Allow "white"]  &&
+            Set.isEmpty  config.modifiers == Bool.true &&  
+            config.command == FromLineToLine 100 -1   
+        Err mes -> mes == "test from 100 to e "
+
+expect
+    when recoverConfigFromInput  " ^10r@black[1-9]"    is 
+        Ok config ->
+            config.patterns == []  &&
+            Set.isEmpty  config.modifiers == Bool.true &&  
+            config.command == SearchSection 10 10 (Regex (Allow "black[1-9]"))
+        Err mes -> mes == "test region "
+
+expect
+    when recoverConfigFromInput  " <10@black"    is 
+        Ok config ->
+            config.patterns == []  &&
+            Set.isEmpty  config.modifiers == Bool.true &&  
+            config.command == SearchSection 10 0 (Allow "black")
+        Err mes -> mes == "test region before "
+
+# maybe create more test in the future, at least to cover detected bugs 
