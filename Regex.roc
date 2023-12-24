@@ -33,7 +33,7 @@ SearchRegexTagsType : [ Dot, CaptureClose, CaptureOpen, ReverseLimitRanges ( Lis
 TokenType : { tag :SearchRegexTagsType , serie : SerieType , capture : Bool  }
 
 
-ParsingResultType : { regex : List TokenType, current : List TokenType, matched : List U8, result : Bool,
+ParsingResultType : { regex : List TokenType, current : List TokenType, matched : List U8, matchFound : Bool,
                 missed : List U8, left : List U8, captured : TreeType, meta : MetaType, strict : StrictType }
 
 
@@ -71,7 +71,7 @@ secondStagePatterns = [
 
 thirdStagePatterns: List  RecoverPatternType
 thirdStagePatterns =  [
-    { tag : BackSlash, str : "\\[.?{}^*]" },  # " #<- this artifact is serves for visual studio code 
+    { tag : BackSlash, str : "\\[.?{}^*]" },  # " #<- this artifact is for visual studio code 
     { tag : Repetition, str : "{(\\d)+}"},   #"   
     { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, #"
     ]  # "
@@ -83,7 +83,7 @@ firstStageChains = evalAndAppendChain firstStagePatterns (Ok regexSeedPattern) (
 onlyExceptInternalPatterns : List  RecoverPatternType
 onlyExceptInternalPatterns = [
     { tag : Character, str : "."},
-    { tag : BackSlash, str : "\\[.?{}^*]"},  # " #<- this artifact is serves for visual studio code 
+    { tag : BackSlash, str : "\\[.?{}^*]"},  # " #<- this artifact is for visual studio code 
     { tag : FromTo, str : "(.)-(.)"},
     ]
 
@@ -395,18 +395,12 @@ getDirectlyChildrenCnt = \ tree, id  ->
 
 createParsingRecord : List TokenType, MetaType, StrictType -> ParsingResultType  
 createParsingRecord = \ regex, meta, strict ->
-    { regex : regex, current : regex, matched : [], result : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : strict }
+    { regex : regex, current : regex, matched : [], matchFound : Bool.false, missed : [], left : [] , captured : treeBase, meta : meta, strict : strict }
 
 createToken : SearchRegexTagsType, SerieType, Bool -> TokenType
 createToken = \ tag, serie, capture ->
     { tag :tag, serie : serie, capture : capture  }
 
-
-
-modifyLastInList : List  a, a -> List  a
-modifyLastInList = \ lst, elem ->
-    List.dropLast lst 1
-    |> List.append elem
 
 splitChainOnSeparators : List TokenType,List TokenType -> List( List TokenType )
 splitChainOnSeparators = \ chain, inputLst ->
@@ -426,7 +420,7 @@ splitChainOnSeparators = \ chain, inputLst ->
 
                     when List.last partialResult is 
                         Ok lst -> 
-                            modifyLastInList partialResult  (List.concat [elem] lst)  
+                            Utils.modifyLastInList partialResult  (List.concat [elem] lst)  
                         Err _ -> 
                             []   
         Err _ ->
@@ -442,7 +436,7 @@ evalRegex = \ utfLst, patterns, regex ->
  
         List.walk patterns [] ( \ state, pattern ->
             out = checkMatching utfLst pattern.tokens
-            if out.result == Bool.true  && List.isEmpty out.missed then
+            if out.matchFound == Bool.true  && List.isEmpty out.missed then
                 List.append state { tag : pattern.tag, parsedResult : out } 
             else
                 state 
@@ -733,7 +727,7 @@ checkMatching = \ utfLst, reg  ->
 
             List.walk updatedStates [] ( \ state, processedReg ->   
 
-                if processedReg.result == Bool.true  then
+                if processedReg.matchFound == Bool.true  then
                     if outState.cnt <= List.len utfLst then
                         List.append state { processedReg & left : List.append  processedReg.left utf} 
                     else
@@ -744,9 +738,9 @@ checkMatching = \ utfLst, reg  ->
                         when getFirstPat inProcessedReg is
                             Inactive patternSet ->
                                 if  outState.cnt > List.len utfLst then
-                                    List.append curState { inProcessedReg & current : [], result : Bool.true, left : [], meta : Inactive}
+                                    List.append curState { inProcessedReg & current : [], matchFound : Bool.true, left : [], meta : Inactive}
                                 else
-                                    List.append curState { inProcessedReg & current : [], result : Bool.true, left : [utf], meta : Inactive}
+                                    List.append curState { inProcessedReg & current : [], matchFound : Bool.true, left : [utf], meta : Inactive}
                                 
                             Active matchThis ->                                    
                                     updatedState = matchThis.state
@@ -763,7 +757,7 @@ checkMatching = \ utfLst, reg  ->
                                                 curState
                                             else
                                                 if List.isEmpty current == Bool.true then 
-                                                    List.append curState { updatedState &  matched : List.append updatedState.matched  utf, current : [], result : Bool.true, left : [], captured : updatedCapture, meta : Inactive}
+                                                    List.append curState { updatedState &  matched : List.append updatedState.matched  utf, current : [], matchFound : Bool.true, left : [], captured : updatedCapture, meta : Inactive}
                                                 else  
                                                     List.append curState { updatedState & matched : List.append updatedState.matched  utf, current : current, left : [], captured : updatedCapture}
 
@@ -787,9 +781,9 @@ checkMatching = \ utfLst, reg  ->
         )
     List.walk complexSearch.parsing  (createParsingRecord reg Inactive  No) ( \ state, parsResult -> 
                 
-        updatedParsResult  =  { parsResult &  result :(checkMatchingValidity parsResult) && parsResult.result  }  
+        updatedParsResult  =  { parsResult &  matchFound :(checkMatchingValidity parsResult) && parsResult.matchFound  }  
         
-        if state.result == Bool.true then
+        if state.matchFound == Bool.true then
             if List.len updatedParsResult.matched > List.len state.matched  then 
                 updatedParsResult
             else 
@@ -906,7 +900,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                                                 Ok  item  -> 
                                                                     when item.tag is 
                                                                         Sequence  inChain ->
-                                                                            modifyLastInList 
+                                                                            Utils.modifyLastInList 
                                                                                 lst (createToken (Sequence (closeLast seqChain (Sequence  inChain) ))  Once Bool.false)     
                                                                         _ ->
                                                                             List.append lst token 
@@ -918,10 +912,10 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                                                 closeLast chainLst (Sequence chain) 
                                                                # List.append chainLst token            
                                                             _ -> 
-                                                                modifyLastInList chainLst (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+                                                                Utils.modifyLastInList chainLst (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
 
                                                     Err _ ->
-                                                        modifyLastInList  chainLst  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
+                                                        Utils.modifyLastInList  chainLst  (createToken (Sequence ( modifLastInChain chain token))  Once Bool.false)
                                             _ ->  
                                                 List.append chainLst token                  
                                     Err _ ->
@@ -956,7 +950,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                                                         # with good synchronization it should be ok 
                                                                         List.dropLast chain 1
                                                                         |> ( \updatedChain ->
-                                                                            modifyLastInList sequences (createToken (Sequence updatedChain) lastSeq.serie lastSeq.capture ))
+                                                                            Utils.modifyLastInList sequences (createToken (Sequence updatedChain) lastSeq.serie lastSeq.capture ))
                                                                     _ -> sequences
                                                             []  ->  []
                                                            
@@ -980,7 +974,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                                     if List.isEmpty sequences then 
                                                         when updateSerie token serie is
                                                             Ok updatedtoken ->
-                                                                Ok (modifyLastInList inLst updatedtoken)
+                                                                Ok (Utils.modifyLastInList inLst updatedtoken)
                                                             Err message -> Err message
                                                     else         
                                                         if cnt > 0 then
@@ -991,7 +985,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                                                         when  createResult is 
                                                                             Ok updatedSeqLst ->
                                                                                 when updatedSeqLst is 
-                                                                                    [ updatedSeq ] -> Ok [createToken (Sequence (modifyLastInList chain updatedSeq)) elemToken.serie elemToken.capture ]
+                                                                                    [ updatedSeq ] -> Ok [createToken (Sequence (Utils.modifyLastInList chain updatedSeq)) elemToken.serie elemToken.capture ]
                                                                                     _ -> Err "Wrong usage of +/*/Repetition/? in pattern"
                                                                             _-> Ok [createToken (Sequence chain) serie elemToken.capture ]
                                                                     _->
@@ -1004,7 +998,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                                                         when  createResult is 
                                                                             Ok updatedSeqLst ->
                                                                                 when updatedSeqLst is 
-                                                                                    [ updatedSeq ] -> Ok [createToken (Sequence (modifyLastInList chain updatedSeq)) elemToken.serie elemToken.capture ]
+                                                                                    [ updatedSeq ] -> Ok [createToken (Sequence (Utils.modifyLastInList chain updatedSeq)) elemToken.serie elemToken.capture ]
                                                                                     _ -> Err "Wrong usage of +/*/Repetition/? in pattern"
                                                                             _ -> 
                                                                                 when (updateSerieIfApplicableInternal chain serie 0 []) is
@@ -1183,7 +1177,7 @@ parseStr = \ str, pattern ->
                     # for now get longest maybe??
                     Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
                         parsResult = checkMatching (Str.toUtf8  str ) regexParser    
-                        if state.result == Bool.true then
+                        if state.matchFound == Bool.true then
                             if List.len parsResult.matched > List.len state.matched  then 
                                 parsResult
                             else 

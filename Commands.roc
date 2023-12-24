@@ -1,16 +1,10 @@
-app "command"
-    packages {
-        pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br"
-    }
-    #exposes []
+interface Commands
+    exposes [PatternType,CommandType]
     imports [
-        pf.Stdout,
-        pf.Stdin,
         Utils,
         Regex,
         Regex.{ParsingResultType},
     ]
-    provides [main] to pf
 
 
 PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
@@ -24,14 +18,14 @@ CommandType : [
     FromPatternToPattern PatternType PatternType,
 ]
 
-AnalyseConfigType :
+ConfigType :
     { command: CommandType, modifiers : Set ModifiersType, patterns : List PatternType  }
 
 
 dummyFun = \  parsResult, config ->
     Ok config
 
-colorTag : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+colorTag : ParsingResultType, ConfigType -> Result ConfigType Str
 colorTag = \  parsResult, config ->
     { command: com, modifiers : mod, patterns : lst } = config
     when (com, lst) is
@@ -41,7 +35,7 @@ colorTag = \  parsResult, config ->
             Ok { config & patterns : [Regex (Color pat) ] }
         _ -> Ok config
 
-regex : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+regex : ParsingResultType, ConfigType -> Result ConfigType Str
 regex = \  parsResult, config ->
     { command: com, modifiers : mod, patterns : lst } = config
     when (com, lst) is
@@ -55,7 +49,7 @@ regex = \  parsResult, config ->
             Ok { config & command: SearchSection head tail (Regex (Allow pat) )}
         _ -> Ok config
 
-createSection : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+createSection : ParsingResultType, ConfigType -> Result ConfigType Str
 createSection = \  parsResult, config ->
     { command: com, modifiers : mod, patterns : lst } = config
     when (com, lst ) is
@@ -105,12 +99,12 @@ createSection = \  parsResult, config ->
         _ -> Err "you try to put to many command " 
 
 
-createNumberLines : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+createNumberLines : ParsingResultType, ConfigType -> Result ConfigType Str
 createNumberLines = \  parsResult, config ->
     Ok { config & modifiers : Set.insert config.modifiers NumberLines }
     
 
-createBlackListed : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+createBlackListed : ParsingResultType, ConfigType -> Result ConfigType Str
 createBlackListed = \  parsResult, config ->
     { command: com, modifiers : mod, patterns : lst } = config
     when (com, lst ) is
@@ -121,7 +115,7 @@ createBlackListed = \  parsResult, config ->
         _ -> Ok  config
 
 
-createPatternToPattern : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+createPatternToPattern : ParsingResultType, ConfigType -> Result ConfigType Str
 createPatternToPattern = \  parsResult, config ->
     { command: com, modifiers : mod, patterns : lst } = config
     when com is
@@ -147,7 +141,7 @@ createPatternToPattern = \  parsResult, config ->
         _ -> Ok config
         
         
-createLineToLine : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+createLineToLine : ParsingResultType, ConfigType -> Result ConfigType Str
 createLineToLine = \  parsResult, config ->
     { command: com, modifiers : mod, patterns : lst } = config
     when com is
@@ -170,7 +164,7 @@ createLineToLine = \  parsResult, config ->
                 _ -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
         _ -> Ok config
     
-handleOthers : ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str
+handleOthers : ParsingResultType, ConfigType -> Result ConfigType Str
 handleOthers = \  parsResult, config ->
     when (Regex.getValue [0, 0] 0 parsResult.captured,
         Regex.getValue [0, 1] 0 parsResult.captured ) is
@@ -212,7 +206,7 @@ handleOthers = \  parsResult, config ->
 
 
 
-modifiersHandlers : Dict Str ( ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str)
+modifiersHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
 modifiersHandlers =
     Dict.empty {}
     |> Dict.insert "^[cC]" colorTag
@@ -223,7 +217,7 @@ modifiersHandlers =
     |> Dict.insert "^[bB]" createBlackListed
 
 
-modifierAnalysis : Str, AnalyseConfigType -> Result AnalyseConfigType Str
+modifierAnalysis : Str, ConfigType -> Result ConfigType Str
 modifierAnalysis = \ word, inState -> 
     if Str.isEmpty  word then 
         Ok inState
@@ -234,7 +228,7 @@ modifierAnalysis = \ word, inState ->
                 Ok config ->
                         when Regex.parseStr word pattern is 
                             Ok parsed ->
-                                if parsed.result == Bool.true then
+                                if parsed.matchFound == Bool.true then
                                     when Dict.get modifiersHandlers pattern  is
                                         Ok handler ->
                                             modifiedConfResult = handler parsed config
@@ -251,7 +245,7 @@ modifierAnalysis = \ word, inState ->
         )
 
 
-commandsToHandlers : Dict Str ( ParsingResultType, AnalyseConfigType -> Result AnalyseConfigType Str)
+commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
 commandsToHandlers =
     Dict.empty {}
     |> Dict.insert "^[Nn][Ll]@" createNumberLines
@@ -264,7 +258,7 @@ simplifiedSyntax =
     Dict.empty {}
 
     
-commandAnalysis : Str, AnalyseConfigType -> Result AnalyseConfigType Str
+commandAnalysis : Str, ConfigType -> Result ConfigType Str
 commandAnalysis = \ word, inState -> 
     Dict.keys commandsToHandlers
     |> List.walkUntil (Ok inState) (\ state, pattern ->
@@ -272,7 +266,7 @@ commandAnalysis = \ word, inState ->
             Ok config -> 
                 when Regex.parseStr word pattern is 
                     Ok parsed -> 
-                        if parsed.result == Bool.true then
+                        if parsed.matchFound == Bool.true then
                             when Dict.get commandsToHandlers pattern  is
                                 Ok handler ->
                                     Break (handler parsed config)
@@ -284,13 +278,10 @@ commandAnalysis = \ word, inState ->
             Err message -> Break (Err message)
         )
 
-recoverConfigFromInput : Str -> Result AnalyseConfigType Str
+recoverConfigFromInput : Str -> Result ConfigType Str
 recoverConfigFromInput = \filterStr ->
     Utils.tokenize filterStr
     |> List.walkUntil (Ok { command: Search, modifiers : Set.empty {}, patterns : [] }) (\ state, word ->
-    # check  is command 
-    # check is simplified command
-    #  full command
         when state is 
             Ok config -> 
                 when commandAnalysis word config is 
@@ -298,11 +289,6 @@ recoverConfigFromInput = \filterStr ->
                     Err message ->  Break (Err message)
             Err message -> Break (Err message)
             ) 
-
-main = 
-
-    dbg  recoverConfigFromInput  "  white "  
-    Stdout.write  "Ok"
 
 # rudimentary  tests
 expect

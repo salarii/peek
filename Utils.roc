@@ -1,5 +1,5 @@
 interface Utils
-    exposes [asciiArrayToNumber, tokenize, utfToStr]
+    exposes [asciiArrayToNumber, tokenize, utfToStr, modifyLastInList]
     imports []
 
 #NumType : I32
@@ -32,3 +32,9 @@ utfToStr = \ lst ->
     when  Str.fromUtf8 lst  is 
         Ok str -> str
         Err _ -> ""
+
+
+modifyLastInList : List  a, a -> List  a
+modifyLastInList = \ lst, elem ->
+    List.dropLast lst 1
+    |> List.append elem
