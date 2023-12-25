@@ -1,41 +1,18 @@
-app "terminal"
-    packages {
-        pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br"
-    }
+interface  Terminal
+    exposes [terminalStep,terminalInit]
     imports [
         pf.Stdout,
         pf.Stdin,
-        pf.Sleep,
-        pf.Tty,
         pf.Task.{ Task },
+        #pf.Tty,  for  some  reason this  import  does not work
         Regex,
         Utils,
+        State,
+        State.{StateType,TerminalLineStateType}
     ]
-    provides [main] to pf
-
-main = Task.onErr terminal \_ -> crash "unknown problem"
-
-LineState : {
-    commandHistory : List (List U8),
-    historyCnt : I32,
-    content : List U8,
-    cursor : { row : I32, col : I32 },
-}
-
-
-content = "here  will be some  kind of text message \n\rasjeiogjaesiogjarodsgjoard\n\rjgoarjoegjsaemv.lsmndo\n\r"
-tail = "\n\n"
 
 initPhrase : List U8
 initPhrase = Str.toUtf8 ""
-
-init : LineState
-init = {
-    commandHistory : [],
-    historyCnt : -1,
-    content : initPhrase,
-    cursor: { row: 1, col: 1},
-}
 
 addToHistoryList : List (List U8), List U8 -> List (List U8)
 addToHistoryList = \ historyLst, newItem ->
@@ -83,76 +60,66 @@ removeCharString =  \ destStr, n ->
         List.dropLast  splited.before  1
         |> List.concat splited.others )
 
-terminal : Task {} *
-terminal =
-    
-    {} <- Tty.enableRawMode |> Task.await
 
-    {} <- Stdout.write  clearScreenPat |> Task.await
-    {} <- Stdout.write (cursorPosition init.cursor) |> Task.await
-    {} <- Stdout.write  content |> Task.await
-    {} <- Stdout.write  tail |> Task.await
-    {} <- Stdout.write  queryScreenPositionPat |> Task.await
-    cursorBytes <- Stdin.bytes |> Task.await
-    cursorPositionRes = queryPosition cursorBytes 
-    when cursorPositionRes is 
-            Ok cursor ->
-                _ <- Task.loop {init &  cursor : cursor } (\state ->
+terminalInit : StateType -> Task StateType *
+terminalInit = \ appState -> 
+    state =  State.getTerminalState appState
+    setupTerminal =
+        #{} <- Tty.enableRawMode |> Task.await
+        #{} <- Stdout.write  clearScreenPat |> Task.await
+        #{} <- Stdout.write  (cursorPosition state.cursor) |> Task.await
+        {} <- Stdout.write  (Utils.utfToStr state.content) |> Task.await
+        {} <- Stdout.write  queryScreenPositionPat |> Task.await
+        Stdin.bytes
+    positionResult <- setupTerminal |> Task.attempt
+    when positionResult is
+        Ok position ->
+            cursorPositionRes = queryPosition position 
+            when cursorPositionRes is 
+                Ok cursor ->
+                    Task.ok (State.setTerminalState  {state & cursor : cursor} appState)
+                Err _ -> Task.ok appState
+        Err _ -> Task.ok appState
 
-                    # Sleep to limit frame rate
-                    {} <- Sleep.millis 50 |> Task.await
+terminalStep : StateType-> Task StateType *
+terminalStep = \ appState ->
+    state =  State.getTerminalState appState
+    updateInputTask = 
+        {} <- drawState state |> Task.await
+        Stdin.bytes
 
-                    {} <- drawState state |> Task.await
-                    
-                    
-                    # Get user input
-                    bytes <- Stdin.bytes |> Task.await
-                    command = parseRawStdin bytes
+    inputResult <- updateInputTask |> Task.attempt     
+    when inputResult is 
+        Ok input ->  
+            command = parseRawStdin input
+            when command is 
+                Shift direction -> 
+                    if (Num.toI32 (List.len state.content) < state.cursor.col && direction == (Right 1 )) ||
+                        ((direction == (Left 1 )) && state.cursor.col == 1 ) then
+                        Task.ok appState
+                    else
+                        Task.ok (State.setTerminalState (modifyCursor state direction) appState)
+                Characters chars ->
+                    Task.ok (State.setTerminalState (modifyLine state (Characters chars)) appState)
+                RemoveLast ->
+                    Task.ok (State.setTerminalState (modifyLine state RemoveLast) appState)
+                ClearLine ->
+                    Task.ok (State.setTerminalState (clearLine state) appState)
+                PreviousCommand ->
+                    Task.ok (State.setTerminalState (fromHistory state Previous) appState)
+                EnterCommand ->
+                    Task.ok (State.setTerminalState (enterHistory state) appState)
+                NextCommand ->
+                    Task.ok (State.setTerminalState (fromHistory state Next) appState)
+                Quit -> 
+                    Task.ok appState
+                Unsupported ->
+                    Task.ok appState
+                _ -> 
+                    Task.ok appState
+        Err _ -> Task.ok appState
 
-                    when command is 
-                        Shift direction -> 
-
-                            if (Num.toI32 (List.len state.content) < state.cursor.col && direction == (Right 1 )) ||
-                            ((direction == (Left 1 )) && state.cursor.col == 1 ) then
-                                Task.ok (Step state)
-                            else
-                                Task.ok (Step (modifyCursor state direction))
-                        Characters chars ->
-                            Task.ok (Step (modifyLine state (Characters chars)))
-                        RemoveLast ->
-                            Task.ok (Step (modifyLine state RemoveLast))
-                        ClearLine ->
-                            Task.ok (Step (clearLine state))
-                        PreviousCommand ->
-                            Task.ok (Step (fromHistory state Previous))
-                        EnterCommand ->
-                            Task.ok (Step (enterHistory state))
-                        NextCommand ->
-                            Task.ok (Step (fromHistory state Next))
-                        Quit -> 
-                            Task.ok (Done state)
-                        Unsupported ->
-
-                            # Clear the screen
-                            {} <- Stdout.write  clearScreenPat |> Task.await
-
-                            dbg "problem"
-                            dbg bytes
-
-                            Task.ok (Done state)
-                        _ -> 
-                            dbg "no t done yet"
-                            Task.ok (Step state)
-
-                ) |> Task.await
-                
-                # Disable raw mode
-                {} <- Tty.disableRawMode |> Task.await
-
-                Task.ok {}
-            Err _ -> Task.ok {}
-
-modifyCursor : LineState, Direction -> LineState
+modifyCursor : TerminalLineStateType, Direction -> TerminalLineStateType
 modifyCursor = \state, direction ->
     when direction is 
         Left val-> 
@@ -185,7 +152,7 @@ modifyCursor = \state, direction ->
                 }
             }
 
-enterHistory : LineState -> LineState
+enterHistory : TerminalLineStateType -> TerminalLineStateType
 enterHistory = \state ->
     {
         state &
@@ -196,7 +163,7 @@ enterHistory = \state ->
         cursor :  {row : state.cursor.row, col : 1 }
     }
 
-fromHistory : LineState, [Previous,Next] -> LineState
+fromHistory : TerminalLineStateType, [Previous,Next] -> TerminalLineStateType
 fromHistory = \state, order ->
     length = Num.toI32 (List.len state.commandHistory)
     if order == Previous && length - 1> state.historyCnt then 
@@ -237,7 +204,7 @@ fromHistory = \state, order ->
     else 
         state
 
-clearLine : LineState -> LineState
+clearLine : TerminalLineStateType -> TerminalLineStateType
 clearLine = \state ->
 
     updatedContent = 
@@ -249,7 +216,7 @@ clearLine = \state ->
     }
     |> modifyCursor Begin
 
-modifyLine : LineState, [Characters (List U8),RemoveLast ] -> LineState
+modifyLine : TerminalLineStateType, [Characters (List U8),RemoveLast ] -> TerminalLineStateType
 modifyLine = \state, operation ->
     when operation is 
         Characters chars ->
@@ -266,7 +233,7 @@ modifyLine = \state, operation ->
             |> modifyCursor (Left 1)
 
 
-drawState : LineState -> Task {} *
+drawState : TerminalLineStateType -> Task {} *
 drawState = \state ->
     #stuff  =
     {} <- Stdout.write clearLinePat |> Task.await
@@ -302,6 +269,7 @@ Action : [
     EnterCommand,
     Characters (List  U8),
     Quit,
+    Empty,
 ]
 
 queryScreenPositionPat = "\u(001b)[6n"
@@ -340,5 +308,5 @@ parseRawStdin = \bytes ->
         [27, 91, 70,..] -> Shift End 
         [27, val, cal,  ..] -> Quit
         [3, ..] -> Quit
-        other -> 
-            Characters other
+        other -> Characters other
+        [] -> Empty
