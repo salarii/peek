@@ -1,5 +1,5 @@
 interface  Terminal
-    exposes [terminalStep,terminalInit]
+    exposes [step,init,setCursor,displayCommand]
     imports [
         pf.Stdout,
         pf.Stdin,
@@ -8,6 +8,8 @@ interface  Terminal
         Regex,
         Utils,
         State,
+        Commands,
+        Commands.{quitCommand},
         State.{StateType,TerminalLineStateType}
     ]
 
@@ -60,15 +62,19 @@ removeCharString =  \ destStr, n ->
         List.dropLast  splited.before  1
         |> List.concat splited.others )
 
+init : StateType -> Task StateType *
+init = \ appState -> 
+    {} <- Stdout.write homeLinePat |> Task.await
+    setCursor appState
 
-terminalInit : StateType -> Task StateType *
-terminalInit = \ appState -> 
+setCursor : StateType -> Task StateType *
+setCursor = \ appState ->
     state =  State.getTerminalState appState
     setupTerminal =
         #{} <- Tty.enableRawMode |> Task.await
         #{} <- Stdout.write  clearScreenPat |> Task.await
         #{} <- Stdout.write  (cursorPosition state.cursor) |> Task.await
-        {} <- Stdout.write  (Utils.utfToStr state.content) |> Task.await
+        #{} <- Stdout.write  (Utils.utfToStr state.content) |> Task.await
         {} <- Stdout.write  queryScreenPositionPat |> Task.await
         Stdin.bytes
     positionResult <- setupTerminal |> Task.attempt
@@ -81,8 +87,41 @@ terminalInit = \ appState ->
                 Err _ -> Task.ok appState
         Err _ -> Task.ok appState
 
-terminalStep : StateType-> Task StateType *
-terminalStep = \ appState ->
+displayCommand :StateType-> Task StateType *
+displayCommand = \ appState ->
+
+    #{} <- Stdout.write clearLinePat |> Task.await
+    out = State.getCommandOutput appState
+    if List.isEmpty out == Bool.false then
+        print =
+            Task.loop out ( \ lst ->
+                when lst is
+                    [front, .. as back ] -> 
+                        {} <- Stdout.write homeLinePat |> Task.await
+                        {} <- Stdout.write front |> Task.await
+                        {} <- Stdout.write "\n" |> Task.await
+                        Task.ok (Step back)
+                    [] -> 
+                        Task.ok (Done {})
+            )
+        active = State.getCommand appState
+        
+        {} <- Stdout.write clearLinePat |> Task.await
+        {} <- Stdout.write homeLinePat |> Task.await
+        {} <- Stdout.write "Command executed: " |> Task.await
+        {} <- Stdout.write active |> Task.await
+        {} <- Stdout.write "\n\n" |> Task.await
+        {} <- Stdout.write homeLinePat |> Task.await
+        {} <- print |> Task.await
+        {} <- Stdout.write clearLinePat |> Task.await
+        _ <- Stdout.write homeLinePat |> Task.attempt
+        cursorUpdated <-setCursor appState |> Task.await
+        Task.ok cursorUpdated
+    else
+        Task.ok appState
+
+step : StateType-> Task StateType *
+step = \ appState ->
     state =  State.getTerminalState appState
     updateInputTask = 
         {} <- drawState state |> Task.await
@@ -108,11 +147,13 @@ terminalStep = \ appState ->
                 PreviousCommand ->
                     Task.ok (State.setTerminalState (fromHistory state Previous) appState)
                 EnterCommand ->
-                    Task.ok (State.setTerminalState (enterHistory state) appState)
+                    updatedState =
+                        Commands.setupSystemCommand  (Utils.utfToStr state.content) appState
+                    Task.ok (State.setTerminalState (enterHistory state) updatedState)
                 NextCommand ->
                     Task.ok (State.setTerminalState (fromHistory state Next) appState)
                 Quit -> 
-                    Task.ok appState
+                    Task.ok (Commands.setupSystemCommand quitCommand appState)
                 Unsupported ->
                     Task.ok appState
                 _ -> 
@@ -220,6 +261,7 @@ modifyLine : TerminalLineStateType, [Characters (List U8),RemoveLast ] -> Termin
 modifyLine = \state, operation ->
     when operation is 
         Characters chars ->
+
             injected = injectString state.content chars (state.cursor.col-1) 
             { state & 
                 content: injected.composed
@@ -235,7 +277,6 @@ modifyLine = \state, operation ->
 
 drawState : TerminalLineStateType -> Task {} *
 drawState = \state ->
-    #stuff  =
     {} <- Stdout.write clearLinePat |> Task.await
     {} <- Stdout.write homeLinePat |> Task.await
     {} <- Stdout.write (Result.withDefault (Str.fromUtf8 state.content ) "") |> Task.await

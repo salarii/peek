@@ -1,11 +1,15 @@
 interface Commands
-    exposes [PatternType,CommandType]
+    exposes [setupSystemCommand,quitCommand, PatternType,CommandType]
     imports [
         Utils,
         Regex,
         Regex.{ParsingResultType},
+        State,
+        State.{StateType},
     ]
 
+quitCommand : Str
+quitCommand =  "peekQuit" 
 
 PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
 
@@ -289,6 +293,10 @@ recoverConfigFromInput = \filterStr ->
                     Err message ->  Break (Err message)
             Err message -> Break (Err message)
             ) 
+setupSystemCommand : Str, StateType  -> StateType
+setupSystemCommand = \ command, state ->  
+    State.setCommand command state
+
 
 # rudimentary  tests
 expect

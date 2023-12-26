@@ -12,21 +12,17 @@ interface  System
         State.{StateType}
         ]
 
-
-# executeSystemCommand  Str 
-executeSystemCommand : Task StateType a -> Task StateType a
-executeSystemCommand = \ taskState ->
-    state <- taskState |> Task.await
+executeSystemCommand : StateType -> Task StateType *
+executeSystemCommand = \ state ->
     lstCmd = Utils.tokenize (State.getCommand  state)
     execute : Cmd -> Task StateType *
-    execute = \ command -> 
+    execute = \ command ->
         result <- Cmd.output  command |> Task.attempt
             when result is  
                 Ok out ->
                     Task.ok  (State.setCommandOutput (Utils.utfToStr out.stdout) state)
-                    
-                Err (val,err) ->
-                    Task.ok  state
+                Err (out,err) ->
+                    Task.ok  (State.setCommandOutput (Utils.utfToStr out.stderr) state)
     when lstCmd is 
         [] -> Task.ok state
         [name] -> 

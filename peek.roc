@@ -11,6 +11,7 @@ app "peek"
         Utils,
         System,
         State,
+        Commands.{quitCommand},
         State.{StateType},
         Terminal
         ]
@@ -19,15 +20,21 @@ app "peek"
 
 mainLoop : StateType -> Task [Step StateType,Done {} ] * 
 mainLoop = \ state  -> 
-    # |> Task.attempt
-    _ <- Stdout.line "ok" |> Task.attempt
-    _ <- Sleep.millis 50 |> Task.attempt    
-    Task.ok (Done {})
+    _ <- Sleep.millis 100 |> Task.attempt
+    termstate <- Terminal.step state |> Task.await
+    if State.getCommand termstate == quitCommand then
+        Task.ok (Done {})
+    else
+        exeState <- System.executeSystemCommand termstate |> Task.await
+        cursorPosOkState <- Terminal.displayCommand exeState |> Task.await
+        Task.ok (Step (State.resetActiveCommand cursorPosOkState) )
 
+peekConsole = "This is peek app : ) \n\n"
 
 main =
+    {} <- Stdout.line peekConsole |> Task.await    
     {} <- Tty.enableRawMode |> Task.await
-    initStateResult <- Terminal.terminalInit (State.create  "") |> Task.attempt
+    initStateResult <- Terminal.init (State.create  "") |> Task.attempt
     when initStateResult is
         Ok initState ->    
             {} <-Task.loop  initState mainLoop  |> Task.await
