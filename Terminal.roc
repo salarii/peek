@@ -326,14 +326,6 @@ cursorPosition = \{row, col} ->
 
     "\u(001b)[\(rowStr);\(colStr)H"
 
-
-withColor : Str, [Red, Green, Blue]-> Str
-withColor = \str, color ->
-    when color is 
-        Red -> "\u(001b)[31m\(str)\u(001b)[0m"
-        Green -> "\u(001b)[32m\(str)\u(001b)[0m"
-        Blue -> "\u(001b)[34m\(str)\u(001b)[0m"
-
 # I want it to be not customizable
 parseRawStdin : List U8 -> Action
 parseRawStdin = \bytes ->

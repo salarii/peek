@@ -1,18 +1,13 @@
 interface Utils
-    exposes [asciiArrayToNumber, tokenize, utfToStr, modifyLastInList]
+    exposes [asciiArrayToNumber, tokenize, utfToStr, modifyLastInList, withColor]
     imports []
 
-#NumType : I32
-#conversionFun : (Str -> Result NumType [InvalidNumStr])
-#conversionFun = Str.toI32
-
-
-#asciiArrayToNumberr : List U8 -> NumType
-#asciiArrayToNumberr = \ lst -> 
-#    Str.fromUtf8 lst
-#    |> Result.withDefault "0"
-#    |> conversionFun
-#    |> Result.withDefault 0
+withColor : Str, [Red, Green, Blue]-> Str
+withColor = \str, color ->
+    when color is 
+        Red -> "\u(001b)[31m\(str)\u(001b)[0m"
+        Green -> "\u(001b)[32m\(str)\u(001b)[0m"
+        Blue -> "\u(001b)[34m\(str)\u(001b)[0m"
 
 
 
