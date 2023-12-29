@@ -4,7 +4,7 @@ interface  Terminal
         pf.Stdout,
         pf.Stdin,
         pf.Task.{ Task },
-        #pf.Tty,  for  some  reason this  import  does not work
+        pf.Tty,
         Regex,
         Utils,
         State,
@@ -12,7 +12,6 @@ interface  Terminal
         Commands.{quitCommand},
         State.{StateType,TerminalLineStateType}
     ]
-
 initPhrase : List U8
 initPhrase = Str.toUtf8 ""
 
@@ -62,19 +61,24 @@ removeCharString =  \ destStr, n ->
         List.dropLast  splited.before  1
         |> List.concat splited.others )
 
+getPromptSize : TerminalLineStateType -> I32 
+getPromptSize = \ state ->
+    state.prompt
+    |> List.len
+    |> Num.toI32
+
 init : StateType -> Task StateType *
 init = \ appState -> 
+    {} <- Tty.enableRawMode |> Task.await
+    {} <- Stdout.write clearLinePat |> Task.await 
     {} <- Stdout.write homeLinePat |> Task.await
+    {} <- Stdout.write (Utils.utfToStr (State.getTerminalState appState).prompt) |> Task.await
     setCursor appState
 
 setCursor : StateType -> Task StateType *
 setCursor = \ appState ->
     state =  State.getTerminalState appState
     setupTerminal =
-        #{} <- Tty.enableRawMode |> Task.await
-        #{} <- Stdout.write  clearScreenPat |> Task.await
-        #{} <- Stdout.write  (cursorPosition state.cursor) |> Task.await
-        #{} <- Stdout.write  (Utils.utfToStr state.content) |> Task.await
         {} <- Stdout.write  queryScreenPositionPat |> Task.await
         Stdin.bytes
     positionResult <- setupTerminal |> Task.attempt
@@ -114,7 +118,8 @@ displayCommand = \ appState ->
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- print |> Task.await
         {} <- Stdout.write clearLinePat |> Task.await
-        _ <- Stdout.write homeLinePat |> Task.attempt
+        {} <- Stdout.write homeLinePat |> Task.await 
+        _ <- Stdout.write (Utils.utfToStr (State.getTerminalState appState).prompt) |> Task.attempt
         cursorUpdated <-setCursor appState |> Task.await
         Task.ok cursorUpdated
     else
@@ -123,6 +128,7 @@ displayCommand = \ appState ->
 step : StateType-> Task StateType *
 step = \ appState ->
     state =  State.getTerminalState appState
+    promptSize = (getPromptSize state)
     updateInputTask = 
         {} <- drawState state |> Task.await
         Stdin.bytes
@@ -133,15 +139,18 @@ step = \ appState ->
             command = parseRawStdin input
             when command is 
                 Shift direction -> 
-                    if (Num.toI32 (List.len state.content) < state.cursor.col && direction == (Right 1 )) ||
-                        ((direction == (Left 1 )) && state.cursor.col == 1 ) then
+                    if (Num.toI32 (List.len state.content) + promptSize < state.cursor.col && direction == (Right 1 )) ||
+                        ((direction == (Left 1 )) && state.cursor.col == 1 + promptSize ) then
                         Task.ok appState
                     else
                         Task.ok (State.setTerminalState (modifyCursor state direction) appState)
                 Characters chars ->
                     Task.ok (State.setTerminalState (modifyLine state (Characters chars)) appState)
                 RemoveLast ->
-                    Task.ok (State.setTerminalState (modifyLine state RemoveLast) appState)
+                    if (state.cursor.col == 1 + promptSize ) then
+                        Task.ok appState
+                    else
+                        Task.ok (State.setTerminalState (modifyLine state RemoveLast) appState)
                 ClearLine ->
                     Task.ok (State.setTerminalState (clearLine state) appState)
                 PreviousCommand ->
@@ -163,7 +172,7 @@ step = \ appState ->
 modifyCursor : TerminalLineStateType, Direction -> TerminalLineStateType
 modifyCursor = \state, direction ->
     when direction is 
-        Left val-> 
+        Left val->
             { state & 
                 cursor: {
                     row: state.cursor.row, 
@@ -181,15 +190,15 @@ modifyCursor = \state, direction ->
         Begin ->
             { state & 
                 cursor: {
-                    row: state.cursor.row, 
-                    col: 1,
+                    row: state.cursor.row,
+                    col: 1+(getPromptSize state),
                 }
             }
         End ->
             { state & 
                 cursor: {
                     row: state.cursor.row, 
-                    col: Num.toI32 (List.len state.content)+1,
+                    col: Num.toI32 (List.len state.content)+1+(getPromptSize state),
                 }
             }
 
@@ -201,12 +210,13 @@ enterHistory = \state ->
         historyCnt:  -1,
         commandHistory :
             addToHistoryList state.commandHistory state.content,
-        cursor :  {row : state.cursor.row, col : 1 }
+        cursor :  {row : state.cursor.row, col : 1 + (getPromptSize state) }
     }
 
 fromHistory : TerminalLineStateType, [Previous,Next] -> TerminalLineStateType
 fromHistory = \state, order ->
     length = Num.toI32 (List.len state.commandHistory)
+    colBase = (getPromptSize state) + 1
     if order == Previous && length - 1> state.historyCnt then 
             List.get state.commandHistory (Num.toNat (state.historyCnt+1))
             |>Result.withDefault  []
@@ -217,7 +227,7 @@ fromHistory = \state, order ->
                     historyCnt:  state.historyCnt + 1,
                     commandHistory :
                         addToHistoryListNoAlter state.commandHistory state.content,
-                    cursor :  {row : state.cursor.row, col : Num.toI32 (List.len updatedContent ) + 1 }
+                    cursor :  {row : state.cursor.row, col : Num.toI32 (List.len updatedContent ) + colBase }
                 })
     else if order == Next && state.historyCnt >= 0 then
             if state.historyCnt == 0 then 
@@ -228,7 +238,7 @@ fromHistory = \state, order ->
                         historyCnt:   -1,
                         commandHistory :
                             addToHistoryListNoAlter state.commandHistory state.content,
-                        cursor :  {row : state.cursor.row, col : 0 }
+                        cursor :  {row : state.cursor.row, col : colBase }
                 }
             else
                 List.get state.commandHistory (Num.toNat (state.historyCnt-1))
@@ -240,7 +250,7 @@ fromHistory = \state, order ->
                         historyCnt:  state.historyCnt - 1,
                         commandHistory :
                             addToHistoryListNoAlter state.commandHistory state.content,
-                        cursor :  {row : state.cursor.row, col : Num.toI32 (List.len updatedContent ) + 1 }
+                        cursor :  {row : state.cursor.row, col : Num.toI32 (List.len updatedContent ) + colBase }
                     })
     else 
         state
@@ -259,26 +269,28 @@ clearLine = \state ->
 
 modifyLine : TerminalLineStateType, [Characters (List U8),RemoveLast ] -> TerminalLineStateType
 modifyLine = \state, operation ->
+    promptSize = (getPromptSize state)
     when operation is 
         Characters chars ->
 
-            injected = injectString state.content chars (state.cursor.col-1) 
+            injected = injectString state.content chars (state.cursor.col-1 - promptSize) 
             { state & 
                 content: injected.composed
             }
-            |> modifyCursor (Right injected.inJectedCnt )
+            |> modifyCursor (Right injected.inJectedCnt ) 
         RemoveLast -> 
             
             { state & 
-                content: removeCharString state.content (state.cursor.col - 1)
+                content: removeCharString state.content (state.cursor.col - 1 - promptSize)
             }
-            |> modifyCursor (Left 1)
+            |> modifyCursor (Left 1) 
 
 
 drawState : TerminalLineStateType -> Task {} *
 drawState = \state ->
     {} <- Stdout.write clearLinePat |> Task.await
     {} <- Stdout.write homeLinePat |> Task.await
+    {} <- Stdout.write (Utils.utfToStr state.prompt) |> Task.await
     {} <- Stdout.write (Result.withDefault (Str.fromUtf8 state.content ) "") |> Task.await
     Stdout.write (cursorPosition state.cursor)
 

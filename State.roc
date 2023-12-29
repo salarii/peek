@@ -6,6 +6,8 @@ interface State
         getCommandOutput,
         setTerminalState,
         getTerminalState,
+        setSystemData,
+        getSystemData,
         getCommand,
         setCommand, 
         StateType,
@@ -17,9 +19,15 @@ TerminalLineStateType : {
     historyCnt : I32,
     content : List U8,
     cursor : { row : I32, col : I32 },
+    prompt : List U8,
 }
 
-StateType := { history : List Str, lastCommandOut : List Str, activeCmd : Str, terminal : TerminalLineStateType }
+SystemDataType : {
+    homePath : Str, 
+    current : Str,
+}
+
+StateType := { history : List Str, lastCommandOut : List Str, activeCmd : Str, terminal : TerminalLineStateType, system : SystemDataType }
 
 create : Str -> StateType
 create = \ initialText ->
@@ -28,8 +36,9 @@ create = \ initialText ->
         historyCnt : -1,
         content : Str.toUtf8 initialText,
         cursor: { row: 1, col: 1},
+        prompt : [],
     }
-    @StateType  {history : [], lastCommandOut : [], activeCmd : "", terminal : init}
+    @StateType  {history : [], lastCommandOut : [], activeCmd : "", terminal : init, system : {homePath : "", current : ""}}
 
 resetActiveCommand : StateType -> StateType
 resetActiveCommand = \ @StateType content ->
@@ -48,6 +57,16 @@ setTerminalState : TerminalLineStateType, StateType -> StateType
 setTerminalState = \ terminalState, @StateType content ->
     @StateType { content &  terminal : terminalState } 
 
+setSystemData : SystemDataType, StateType -> StateType
+setSystemData = \ systemData, @StateType content ->
+    prompt =
+        systemData.current
+        |> Str.concat " $> "
+        |> Str.toUtf8
+
+    terminal =  content.terminal
+    @StateType { content &  system : systemData, terminal : { terminal & prompt : prompt } } 
+
 getCommandOutput : StateType -> List Str
 getCommandOutput = \@StateType content ->
     content.lastCommandOut
@@ -63,3 +82,7 @@ getCommand = \@StateType content ->
 getTerminalState : StateType -> TerminalLineStateType
 getTerminalState = \@StateType content ->
     content.terminal
+
+getSystemData : StateType -> SystemDataType
+getSystemData = \ @StateType content ->
+    content.system

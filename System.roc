@@ -1,8 +1,8 @@
-app "system"
-    packages { pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br" }
+# app "system"
+#     packages { pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br" }
     
-#interface  System
-#    exposes [executeSystemCommand]
+interface  System
+    exposes [executeSystemCommand,updateSystemData]
     imports [
         pf.Stdin, 
         pf.Stdout, 
@@ -18,7 +18,7 @@ app "system"
         State,
         State.{StateType}
         ]
-    provides [main] to pf
+    # provides [main] to pf
 
 executeSystemCommand : StateType -> Task StateType *
 executeSystemCommand = \ state ->
@@ -43,15 +43,6 @@ executeSystemCommand = \ state ->
                 |> Cmd.args args
             execute command
 
-    # splitLast : 
-    # Str, 
-    # Str
-    # -> Result 
-    #     {
-    #         before : Str,
-    #         after : Str
-    #     } [No
-
 isDirectoryPath : Str -> Task Bool  *
 isDirectoryPath = \ str ->
     listResult <-listFiles str |> Task.attempt
@@ -72,23 +63,23 @@ listFiles = \ path ->
             |> Task.ok 
          Err err -> Task.ok [] 
             
-#constructPath : Str, Str ->    
-#constructPath \ left, right  ->
-
-#fromStr : Str -> Path
-
-
-getHomeDirectory : StateType -> Task StateType *
-getHomeDirectory = \ state ->
-    res <-Env.var "HOME" |>  Task.attempt
-    when res is 
-        Ok homeDir ->
-            Task.ok state
-        Err _ -> 
-            Task.ok state
-
-#getCurrentDirectory : StateType -> Task StateType *
-#cwd : Task Path [CwdUnavailable]
+updateSystemData : StateType -> Task StateType *
+updateSystemData = \ state -> 
+    currentResult <- Env.cwd  |>  Task.attempt
+    when currentResult is 
+        Ok current ->
+            res <-Env.var "HOME" |>  Task.attempt
+            when res is 
+                Ok homeDir ->
+                    Task.ok (
+                        State.setSystemData 
+                            { homePath : homeDir, current : Path.display current }
+                            state
+                    )
+                Err _ -> 
+                    Task.ok state
+        Err _ -> Task.ok state
+    
 
 grouping : List Str, Nat, Nat ->  { content: List Str, colCnt : Nat }
 grouping = \ textLst, seaparatorLen, lineSize ->
@@ -204,37 +195,24 @@ directoryMap = \ path, items ->
            Err _ -> Task.ok (List.append lst Bool.false)
         )
 
-main =
+# main =
 #     command =
 #         Cmd.new "ls"
 #         |> Cmd.args ["-all"]
-    stuff = "afsdfsf"
+    # stuff = "afsdfsf"
     #g  = grouping (List.repeat "japko" 20 |> List.append "tttttttddddddfsdf")  2 40
     # t <-(isDirectoryPath "/home/artur/roc/peek/ooo")  |> Task.attempt 
     # Stdout.line "gdfgfdhfd"
     
-    result <- directoryMap  "/home/artur/roc/peek" ["Commands.roc", "ooo"] |> Task.attempt
-       when  result  is 
-            Ok res  ->  
-                dbg  res 
-                Stdout.line "fsdafsdf"
-            Err _ -> Stdout.line "fsdafsdf"
+    # result <- directoryMap  "/home/artur/roc/peek" ["Commands.roc", "ooo"] |> Task.attempt
+    #    when  result  is 
+    #         Ok res  ->  
+    #             dbg  res 
+    #             Stdout.line "fsdafsdf"
+    #         Err _ -> Stdout.line "fsdafsdf"
     
     
-    #{} <- t |> Task.await
-    
-    #Stdout.line "The (withColor "Part 1 Sample:" Green)  frog"
-    #kk = isPath "fsdfds"
-    #"The \("GREEN" |> Color.fg Green) frog"
-    #dbg res
-    # accessResult <-Dir.list  (Path.fromStr "~") |> Task.attempt
-    # when accessResult is
-    #     Ok fileLst ->
-    #         dbg  fileLst
-    #         Stdout.line "fdsdfsgsd"
-    #     Err err -> 
-    #         dbg err
-    #         Stdout.line "fdsdfsgsd" 
+
 
 
     

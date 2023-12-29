@@ -8,6 +8,9 @@ app "peek"
         pf.Cmd.{Output },
         pf.Sleep,
         pf.Tty,
+        pf.Path,
+        pf.Dir,
+        pf.Env,
         Utils,
         System,
         State,
@@ -18,9 +21,11 @@ app "peek"
     provides [main] to pf
 
 
+
+
 mainLoop : StateType -> Task [Step StateType,Done {} ] * 
 mainLoop = \ state  -> 
-    _ <- Sleep.millis 100 |> Task.attempt
+    _ <- Sleep.millis 50 |> Task.attempt
     termstate <- Terminal.step state |> Task.await
     if State.getCommand termstate == quitCommand then
         Task.ok (Done {})
@@ -33,31 +38,15 @@ peekConsole = "This is peek app : ) \n\n"
 
 main =
     {} <- Stdout.line peekConsole |> Task.await    
-    {} <- Tty.enableRawMode |> Task.await
-    initStateResult <- Terminal.init (State.create  "") |> Task.attempt
-    when initStateResult is
-        Ok initState ->    
-            {} <-Task.loop  initState mainLoop  |> Task.await
+    systemDataUpdated <-System.updateSystemData (State.create  "") |> Task.await
+    initTerminalStateResult <-Terminal.init systemDataUpdated |> Task.attempt
+    when initTerminalStateResult is
+        Ok initTerminalState ->    
+            {} <-Task.loop  initTerminalState mainLoop  |> Task.await
             {} <- Tty.disableRawMode |> Task.await
             Task.ok {}
         Err _ -> Task.ok {}
 
-    
-# loop : 
-#     state,     
-#     (state
-#     -> Task 
-#         [
-#             Step state,
-#             Done done
-#         ] err)
-#     -> Task done err
-
-#     Stdout.line "fdsdfsgsd" 
-    #out <- (Cmd.output command ) |> Task.await
-    
-    #    dbg out
-    #    Stdout.line "ok"
 
     
     
