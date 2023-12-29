@@ -30,7 +30,7 @@ mainLoop = \ state  ->
     if State.getCommand termstate == quitCommand then
         Task.ok (Done {})
     else
-        exeState <- System.executeSystemCommand termstate |> Task.await
+        exeState <- System.executeCommand termstate |> Task.await
         cursorPosOkState <- Terminal.displayCommand exeState |> Task.await
         Task.ok (Step (State.resetActiveCommand cursorPosOkState) )
 
@@ -38,7 +38,7 @@ peekConsole = "This is peek app : ) \n\n"
 
 main =
     {} <- Stdout.line peekConsole |> Task.await    
-    systemDataUpdated <-System.updateSystemData (State.create  "") |> Task.await
+    systemDataUpdated <-System.updateData (State.create  "") |> Task.await
     initTerminalStateResult <-Terminal.init systemDataUpdated |> Task.attempt
     when initTerminalStateResult is
         Ok initTerminalState ->    

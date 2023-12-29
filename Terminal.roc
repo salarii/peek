@@ -8,6 +8,7 @@ interface  Terminal
         Regex,
         Utils,
         State,
+        System,
         Commands,
         Commands.{quitCommand},
         State.{StateType,TerminalLineStateType}
@@ -66,6 +67,37 @@ getPromptSize = \ state ->
     state.prompt
     |> List.len
     |> Num.toI32
+
+guessPath : StateType -> Task StateType * 
+guessPath = \ appState ->
+    terminal = State.getTerminalState  appState
+    Utils.utfToStr terminal.content
+    |> Utils.tokenize
+    |> ( \ splited -> 
+            when splited is 
+                [..,last] ->
+                    guessResult <- System.guessPath last |> Task.attempt
+                    when guessResult is
+                        Ok guess -> 
+                            when guess is 
+                                Extend str -> 
+                                    Task.ok (State.setTerminalState (modifyLine terminal (Characters (Str.toUtf8 str))) appState)
+                                ListDir lst ->
+
+                                    group = 
+                                        System.grouping lst 3 100
+                                        |> System.printGroup
+
+                                    {} <- Stdout.write "\n" |> Task.await
+                                    {} <- Stdout.write homeLinePat |> Task.await
+                                    {} <- Stdout.write group |> Task.await
+                                    _ <- Stdout.write homeLinePat |> Task.attempt
+                                    Task.ok appState
+                                None -> Task.ok appState
+
+                        Err _ -> Task.ok appState
+                [] -> Task.ok appState ) 
+
 
 init : StateType -> Task StateType *
 init = \ appState -> 
@@ -155,6 +187,8 @@ step = \ appState ->
                     Task.ok (State.setTerminalState (clearLine state) appState)
                 PreviousCommand ->
                     Task.ok (State.setTerminalState (fromHistory state Previous) appState)
+                GuessPath -> 
+                    guessPath appState
                 EnterCommand ->
                     updatedState =
                         Commands.setupSystemCommand  (Utils.utfToStr state.content) appState
@@ -320,6 +354,7 @@ Action : [
     RemoveLast,
     ClearLine,
     EnterCommand,
+    GuessPath, 
     Characters (List  U8),
     Quit,
     Empty,
@@ -351,6 +386,7 @@ parseRawStdin = \bytes ->
         [13, ..] -> EnterCommand
         [27, 91, 72,..] -> Shift Begin
         [27, 91, 70,..] -> Shift End 
+        [9, ..] -> GuessPath
         [27, val, cal,  ..] -> Quit
         [3, ..] -> Quit
         other -> Characters other

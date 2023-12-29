@@ -2,7 +2,7 @@
 #     packages { pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br" }
     
 interface  System
-    exposes [executeSystemCommand,updateSystemData]
+    exposes [executeCommand,updateData,guessPath, grouping, printGroup]
     imports [
         pf.Stdin, 
         pf.Stdout, 
@@ -20,8 +20,10 @@ interface  System
         ]
     # provides [main] to pf
 
-executeSystemCommand : StateType -> Task StateType *
-executeSystemCommand = \ state ->
+GuessEffectType : [Extend Str, ListDir (List Str), None]
+
+executeCommand : StateType -> Task StateType *
+executeCommand = \ state ->
     lstCmd = Utils.tokenize (State.getCommand  state)
     execute : Cmd -> Task StateType *
     execute = \ command ->
@@ -43,6 +45,39 @@ executeSystemCommand = \ state ->
                 |> Cmd.args args
             execute command
 
+guessPath : Str -> Task GuessEffectType *
+guessPath = \ path ->
+    listedTop <- listFiles path |> Task.attempt
+    when listedTop is 
+        Ok listed ->
+            if List.isEmpty listed then
+                when stripPath path is 
+                    Ok splitted -> 
+                        listedBase <- listFiles splitted.before |> Task.attempt
+                        dbg  splitted
+                        when listedBase is 
+                            Ok base ->
+                                if List.isEmpty base then
+                                    Task.ok None
+                                else
+                                    cleanPath =
+                                        List.map base (\ subPath -> 
+                                             when Str.splitLast subPath "/" is 
+                                                Ok splited -> splited.after
+                                                Err _ -> subPath
+                                            )
+
+                                    Task.ok (guessEffect cleanPath splitted.after)
+                            Err _ -> Task.ok None
+                    Err _ -> Task.ok None
+            else
+                when Str.toUtf8 path is 
+                    [..,'/'] -> 
+                        Task.ok (ListDir listed)
+                    _ ->
+                        Task.ok (Extend "/")
+        Err _ -> Task.ok None
+
 isDirectoryPath : Str -> Task Bool  *
 isDirectoryPath = \ str ->
     listResult <-listFiles str |> Task.attempt
@@ -63,8 +98,8 @@ listFiles = \ path ->
             |> Task.ok 
          Err err -> Task.ok [] 
             
-updateSystemData : StateType -> Task StateType *
-updateSystemData = \ state -> 
+updateData : StateType -> Task StateType *
+updateData = \ state -> 
     currentResult <- Env.cwd  |>  Task.attempt
     when currentResult is 
         Ok current ->
@@ -159,11 +194,11 @@ printGroup :  { content: List Str, colCnt : Nat } -> Str
 printGroup = \ group -> 
     List.walk group.content ("",0) (\state, word ->
         if state.1 == group.colCnt - 1 then
-            (Str.concat state.0 (Str.concat word "\n"), 0 )
+            (Str.concat state.0 (Str.concat word "\n\r"), 0 )
         else
             (Str.concat state.0 word, state.1 + 1 )
     )
-    |>( \ result -> Str.concat result.0 "\n")
+    |>( \ result -> Str.concat result.0 "\n\r")
 
 printGroupWithMap :  { content: List Str, colCnt : Nat }, List Bool -> Str
 printGroupWithMap = \ group, map -> 
@@ -195,21 +230,84 @@ directoryMap = \ path, items ->
            Err _ -> Task.ok (List.append lst Bool.false)
         )
 
-# main =
-#     command =
-#         Cmd.new "ls"
-#         |> Cmd.args ["-all"]
-    # stuff = "afsdfsf"
+stripPath : Str -> Result {before : Str, after: Str}  Str
+stripPath = \path ->
+    when Str.splitLast path "/" is 
+        Ok splited -> Ok {splited & before : Str.concat splited.before "/" }
+        Err _ -> Err "this seems to be not a system path"
+
+guessEffect : List Str, Str -> GuessEffectType
+guessEffect = \ lst, pattern  ->
+    if Str.isEmpty pattern == Bool.true then
+        None
+    else 
+        when findSubset lst pattern is 
+            [] -> None
+            subset -> 
+                if List.contains subset "" == Bool.true then 
+                    ListDir subset
+                else
+                    List.map subset ( \ word ->
+                        when Str.splitFirst word pattern is 
+                            Ok splited -> splited.after
+                            Err _ -> word
+                    )
+                    |> findCommon 
+                    |> ( \ common ->
+                        if Str.isEmpty common == Bool.true then 
+                            ListDir subset
+                        else
+                            Extend common
+                    )
+
+findSubset : List Str, Str -> List Str
+findSubset = \ lst, pattern ->
+    List.walk lst  [] ( \ subset, word -> 
+
+        if Str.startsWith word pattern == Bool.true then
+            List.append subset word 
+        else
+            subset
+    )
+
+findCommon : List Str -> Str
+findCommon = \ lst -> 
+    List.map lst  ( \ word -> Str.toUtf8 word )
+    |> List.sortWith ( \ left, right ->
+        if List.len left > List.len right then
+            GT
+        else if List.len left == List.len right then
+            EQ
+        else  
+            LT) 
+    |> (\ utfLst ->
+        when utfLst is 
+            [first, .. as tail ] ->
+                List.walk tail first (\ current, newLst ->
+                    List.map2 current newLst ( \ lChar, rChar ->
+                        if lChar == rChar then
+                            lChar
+                        else
+                            0 ))
+                |> List.walkUntil "" ( \ common,char -> 
+                    if char != 0 then
+                        Continue ( Str.concat common ( Utils.utfToStr [char] ))
+                    else 
+                        Break common )
+            [] -> ""
+          ) 
+
+#main =
+    # command =
+    #     Cmd.new "test"
+    #     |> Cmd.args ["-f "]
+
     #g  = grouping (List.repeat "japko" 20 |> List.append "tttttttddddddfsdf")  2 40
-    # t <-(isDirectoryPath "/home/artur/roc/peek/ooo")  |> Task.attempt 
-    # Stdout.line "gdfgfdhfd"
+
+    # stuff = "afsdfsf"
+
     
-    # result <- directoryMap  "/home/artur/roc/peek" ["Commands.roc", "ooo"] |> Task.attempt
-    #    when  result  is 
-    #         Ok res  ->  
-    #             dbg  res 
-    #             Stdout.line "fsdafsdf"
-    #         Err _ -> Stdout.line "fsdafsdf"
+
     
     
 
