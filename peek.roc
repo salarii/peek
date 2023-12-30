@@ -29,11 +29,12 @@ mainLoop = \ state  ->
     termstate <- Terminal.step state |> Task.await
     if State.getCommand termstate == quitCommand then
         Task.ok (Done {})
-    else
+    else if State.getCommand termstate != "" then 
         exeState <- System.executeCommand termstate |> Task.await
         cursorPosOkState <- Terminal.displayCommand exeState |> Task.await
         Task.ok (Step (State.resetActiveCommand cursorPosOkState) )
-
+    else 
+        Task.ok (Step termstate )
 peekConsole = "This is peek app : ) \n\n"
 
 main =

@@ -25,25 +25,71 @@ GuessEffectType : [Extend Str, ListDir (List Str), None]
 executeCommand : StateType -> Task StateType *
 executeCommand = \ state ->
     lstCmd = Utils.tokenize (State.getCommand  state)
-    execute : Cmd -> Task StateType *
-    execute = \ command ->
+    
+    formatLsType : Str -> Str
+    formatLsType = \ out -> 
+        Utils.tokenizeNewLine out
+        |> grouping  4 100
+        |> printGroup   
+    
+    execute : Cmd, Bool -> Task StateType *
+    execute = \ command, lsFormat ->
         result <- Cmd.output  command |> Task.attempt
             when result is  
                 Ok out ->
-                    Task.ok  (State.setCommandOutput (Utils.utfToStr out.stdout) state)
+                    if lsFormat == Bool.true then 
+                        Task.ok  (State.setCommandOutput (formatLsType (Utils.utfToStr out.stdout)) state)
+                    else 
+                        Task.ok  (State.setCommandOutput (Utils.utfToStr out.stdout) state)
                 Err (out,err) ->
                     Task.ok  (State.setCommandOutput (Utils.utfToStr out.stderr) state)
+    
+    
+    executeCd : Str -> Task StateType *
+    executeCd = \ path ->
+
+        if Str.isEmpty path == Bool.true then
+            
+            systemData = State.getSystemData state
+            setEnv <-Env.setCwd (Path.fromStr systemData.homePath) |> Task.attempt
+            when setEnv is
+                Ok _ -> updateData state
+                Err _ -> Task.ok state
+
+        else
+            isDirResult <-isDirectoryPath path |> Task.attempt
+            when isDirResult is
+                Ok isDir ->
+                    if isDir == Bool.true then
+                        setEnv <-Env.setCwd (Path.fromStr path) |> Task.attempt
+                        when setEnv is
+                            Ok _ ->
+                                updateData state
+                            Err _ ->
+                                Task.ok state
+                    else
+                        Task.ok state
+                Err _ -> Task.ok state
+
     when lstCmd is 
         [] -> Task.ok state
-        [name] -> 
-            command =
-                Cmd.new name
-            execute command
+        [name] ->
+            if name == "cd" then
+                executeCd ""
+            else
+                command =
+                    Cmd.new name
+                execute command (name =="ls")
         [name, .. as args] ->
-            command =
-                Cmd.new name
-                |> Cmd.args args
-            execute command
+            if name == "cd" then
+                when args is 
+                    [arg] -> executeCd arg
+                    _ -> Task.ok state
+            else
+                command =
+                    Cmd.new name
+                    |> Cmd.args args
+                execute command (name =="ls")
 
 guessPath : Str -> Task GuessEffectType *
 guessPath = \ path ->
@@ -54,7 +100,6 @@ guessPath = \ path ->
                 when stripPath path is 
                     Ok splitted -> 
                         listedBase <- listFiles splitted.before |> Task.attempt
-                        dbg  splitted
                         when listedBase is 
                             Ok base ->
                                 if List.isEmpty base then
@@ -233,8 +278,9 @@ directoryMap = \ path, items ->
 stripPath : Str -> Result {before : Str, after: Str}  Str
 stripPath = \path ->
     when Str.splitLast path "/" is 
-        Ok splited -> Ok {splited & before : Str.concat splited.before "/" }
-        Err _ -> Err "this seems to be not a system path"
+        Ok splited -> 
+            Ok {splited & before : Str.concat splited.before "/" }
+        Err _ -> Ok {before : "./", after:path }
 
 guessEffect : List Str, Str -> GuessEffectType
 guessEffect = \ lst, pattern  ->

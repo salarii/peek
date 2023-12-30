@@ -155,7 +155,11 @@ displayCommand = \ appState ->
         cursorUpdated <-setCursor appState |> Task.await
         Task.ok cursorUpdated
     else
-        Task.ok appState
+        {} <- Stdout.write clearLinePat |> Task.await
+        {} <- Stdout.write homeLinePat |> Task.await 
+        _ <- Stdout.write (Utils.utfToStr (State.getTerminalState appState).prompt) |> Task.attempt
+        cursorUpdated <-setCursor appState |> Task.await
+        Task.ok cursorUpdated
 
 step : StateType-> Task StateType *
 step = \ appState ->

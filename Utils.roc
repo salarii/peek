@@ -1,5 +1,5 @@
 interface Utils
-    exposes [asciiArrayToNumber, tokenize, utfToStr, modifyLastInList, withColor]
+    exposes [asciiArrayToNumber, tokenize, utfToStr, modifyLastInList, withColor, tokenizeNewLine]
     imports []
 
 withColor : Str, [Red, Green, Blue]-> Str
@@ -18,10 +18,17 @@ asciiArrayToNumber = \ lst, convert ->
     |> convert
     |> Result.withDefault 0
 
+tokenize : Str -> List Str 
 tokenize  = \ str  -> 
     Str.split str  " "
     |> List.dropIf  Str.isEmpty
     
+tokenizeNewLine : Str -> List Str    
+tokenizeNewLine  = \ newLine  ->
+    Str.replaceEach newLine "\r" ""
+    |> Str.split  "\n"
+
+
 utfToStr : List U8  -> Str
 utfToStr = \ lst ->
     when  Str.fromUtf8 lst  is 
