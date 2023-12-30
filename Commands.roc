@@ -1,33 +1,23 @@
 interface Commands
-    exposes [setupSystemCommand,quitCommand, PatternType,CommandType]
+    exposes [handleUserCommand,quitCommand, replaceTilde]
     imports [
+        pf.File,
+        pf.Path,
+        pf.Task.{ Task },
         Utils,
         Regex,
         Regex.{ParsingResultType},
         State,
-        State.{StateType},
+        System,
+        State.{StateType, PatternType, ModifiersType, CommandType, ConfigType},
     ]
 
 quitCommand : Str
 quitCommand =  "peekQuit" 
 
-PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
-
-ModifiersType  : [ NumberLines]
-
-CommandType : [
-    Search,
-    SearchSection U32 U32 PatternType,
-    FromLineToLine  I32 I32,
-    FromPatternToPattern PatternType PatternType,
-]
-
-ConfigType :
-    { command: CommandType, modifiers : Set ModifiersType, patterns : List PatternType  }
-
-
 dummyFun = \  parsResult, config ->
     Ok config
+
 
 colorTag : ParsingResultType, ConfigType -> Result ConfigType Str
 colorTag = \  parsResult, config ->
@@ -261,7 +251,6 @@ simplifiedSyntax : Dict Str Str
 simplifiedSyntax = 
     Dict.empty {}
 
-    
 commandAnalysis : Str, ConfigType -> Result ConfigType Str
 commandAnalysis = \ word, inState -> 
     Dict.keys commandsToHandlers
@@ -293,10 +282,62 @@ recoverConfigFromInput = \filterStr ->
                     Err message ->  Break (Err message)
             Err message -> Break (Err message)
             ) 
-setupSystemCommand : Str, StateType  -> StateType
-setupSystemCommand = \ command, state ->  
-    State.setCommand command state
 
+replaceTilde : StateType, Str  -> Str
+replaceTilde = \state, str -> 
+    systemData = State.getSystemData state
+    Str.replaceEach str "~" systemData.homePath 
+
+handleUserCommand : StateType, Str -> Task StateType * 
+handleUserCommand = \ state, commandPatRaw ->
+    commandPat  = replaceTilde state commandPatRaw
+    commandLst = Utils.tokenize commandPat
+    mode = State.getAppMode state
+    pickAndExecute : List Str -> Task StateType * 
+    pickAndExecute = \ comLst ->
+        if mode == System then 
+            exeState <- System.executeCommand state comLst |> Task.await
+            Task.ok exeState
+        else if mode == Search then 
+                # create config and execute it on file
+            Task.ok state
+        else # Search 
+            Task.ok state
+
+    when commandLst is 
+        [command] ->
+            if command == quitCommand then
+                Task.ok (State.setAppMode state Quitting)
+            else
+                if mode == System then 
+                    if Str.startsWith command "fm@" == Bool.true then
+                        when Str.splitFirst command "fm@" is 
+                            Ok splitted -> 
+                                fileResult <- File.readUtf8 (Path.fromStr splitted.after)  |> Task.attempt
+                                when fileResult is
+                                    Ok file ->
+                                        Task.ok (
+                                            
+                                            State.setCommandOutput state  "Enter file analyze mode\n\rEnter filters and execute search"  
+                                            |> State.setFile  (Utils.tokenizeNewLine file)
+                                            |> State.setAppMode Search
+                                            |> State.updatePrompt )
+                                    Err _ ->
+                                        Task.ok (State.setCommandOutput state  "can't load file \(splitted.after)")
+                            Err _ -> Task.ok state
+                    else
+                        pickAndExecute commandLst 
+                else if mode == Search then
+                    if command == "sm@" then
+                        Task.ok (
+                            State.setCommandOutput state  "Enter system command mode"  
+                            |> State.setAppMode Search
+                            |> State.updatePrompt )
+                    else
+                        pickAndExecute commandLst
+                else # Quitting 
+                    Task.ok state
+        _ ->  pickAndExecute commandLst
 
 # rudimentary  tests
 expect

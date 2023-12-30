@@ -76,12 +76,12 @@ guessPath = \ appState ->
     |> ( \ splited -> 
             when splited is 
                 [..,last] ->
-                    guessResult <- System.guessPath last |> Task.attempt
+                    guessResult <- System.guessPath (Commands.replaceTilde  appState last)  |> Task.attempt
                     when guessResult is
                         Ok guess -> 
                             when guess is 
                                 Extend str -> 
-                                    Task.ok (State.setTerminalState (modifyLine terminal (Characters (Str.toUtf8 str))) appState)
+                                    Task.ok (State.setTerminalState appState (modifyLine terminal (Characters (Str.toUtf8 str))) )
                                 ListDir lst ->
 
                                     group = 
@@ -119,12 +119,12 @@ setCursor = \ appState ->
             cursorPositionRes = queryPosition position 
             when cursorPositionRes is 
                 Ok cursor ->
-                    Task.ok (State.setTerminalState  {state & cursor : cursor} appState)
+                    Task.ok (State.setTerminalState appState {state & cursor : cursor} )
                 Err _ -> Task.ok appState
         Err _ -> Task.ok appState
 
-displayCommand :StateType-> Task StateType *
-displayCommand = \ appState ->
+displayCommand :StateType, Str-> Task StateType *
+displayCommand = \ appState, command ->
 
     #{} <- Stdout.write clearLinePat |> Task.await
     out = State.getCommandOutput appState
@@ -140,12 +140,11 @@ displayCommand = \ appState ->
                     [] -> 
                         Task.ok (Done {})
             )
-        active = State.getCommand appState
         
         {} <- Stdout.write clearLinePat |> Task.await
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- Stdout.write "Command executed: " |> Task.await
-        {} <- Stdout.write active |> Task.await
+        {} <- Stdout.write command |> Task.await
         {} <- Stdout.write "\n\n" |> Task.await
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- print |> Task.await
@@ -179,28 +178,29 @@ step = \ appState ->
                         ((direction == (Left 1 )) && state.cursor.col == 1 + promptSize ) then
                         Task.ok appState
                     else
-                        Task.ok (State.setTerminalState (modifyCursor state direction) appState)
+                        Task.ok (State.setTerminalState appState (modifyCursor state direction) )
                 Characters chars ->
-                    Task.ok (State.setTerminalState (modifyLine state (Characters chars)) appState)
+                    Task.ok (State.setTerminalState appState (modifyLine state (Characters chars)) )
                 RemoveLast ->
                     if (state.cursor.col == 1 + promptSize ) then
                         Task.ok appState
                     else
-                        Task.ok (State.setTerminalState (modifyLine state RemoveLast) appState)
+                        Task.ok (State.setTerminalState appState (modifyLine state RemoveLast) )
                 ClearLine ->
-                    Task.ok (State.setTerminalState (clearLine state) appState)
+                    Task.ok (State.setTerminalState appState (clearLine state) )
                 PreviousCommand ->
-                    Task.ok (State.setTerminalState (fromHistory state Previous) appState)
+                    Task.ok (State.setTerminalState appState (fromHistory state Previous) )
                 GuessPath -> 
                     guessPath appState
                 EnterCommand ->
-                    updatedState =
-                        Commands.setupSystemCommand  (Utils.utfToStr state.content) appState
-                    Task.ok (State.setTerminalState (enterHistory state) updatedState)
+                    exeState <- State.setTerminalState appState (enterHistory state)
+                       |> Commands.handleUserCommand  (Utils.utfToStr state.content) |> Task.await
+                    cursorPosOkState <- Terminal.displayCommand exeState (Utils.utfToStr state.content) |> Task.await
+                    Task.ok (State.resetActiveCommand cursorPosOkState)
                 NextCommand ->
-                    Task.ok (State.setTerminalState (fromHistory state Next) appState)
+                    Task.ok (State.setTerminalState appState (fromHistory state Next) )
                 Quit -> 
-                    Task.ok (Commands.setupSystemCommand quitCommand appState)
+                    Commands.handleUserCommand appState quitCommand   
                 Unsupported ->
                     Task.ok appState
                 _ -> 

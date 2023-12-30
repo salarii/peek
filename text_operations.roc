@@ -10,7 +10,7 @@ app "peek"
         pf.Path,
         pf.Task.{Task},
         Regex,
-        Commands.{PatternType},
+        State.{PatternType},
         Utils]
     provides [main] to pf
 

@@ -20,12 +20,16 @@ interface  System
         ]
     # provides [main] to pf
 
+# the goal of embeded system terminal is to just facilitate navigation between location
+# ls, cd stuff like that should work 
+# I want to be able to locate and load log files for further processing 
+# maybe some simple operations nothing more
+
 GuessEffectType : [Extend Str, ListDir (List Str), None]
 
-executeCommand : StateType -> Task StateType *
-executeCommand = \ state ->
-    lstCmd = Utils.tokenize (State.getCommand  state)
-    
+executeCommand : StateType, List Str -> Task StateType *
+executeCommand = \ state, lstCmd ->
+
     formatLsType : Str -> Str
     formatLsType = \ out -> 
         Utils.tokenizeNewLine out
@@ -38,11 +42,11 @@ executeCommand = \ state ->
             when result is  
                 Ok out ->
                     if lsFormat == Bool.true then 
-                        Task.ok  (State.setCommandOutput (formatLsType (Utils.utfToStr out.stdout)) state)
+                        Task.ok  (State.setCommandOutput state (formatLsType (Utils.utfToStr out.stdout)))
                     else 
-                        Task.ok  (State.setCommandOutput (Utils.utfToStr out.stdout) state)
+                        Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stdout))
                 Err (out,err) ->
-                    Task.ok  (State.setCommandOutput (Utils.utfToStr out.stderr) state)
+                    Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stderr))
     
     
     executeCd : Str -> Task StateType *
@@ -152,9 +156,11 @@ updateData = \ state ->
             when res is 
                 Ok homeDir ->
                     Task.ok (
-                        State.setSystemData 
-                            { homePath : homeDir, current : Path.display current }
+                        (State.setSystemData 
                             state
+                            { homePath : homeDir, current : Path.display current }
+                        )
+                        |> State.updatePrompt
                     )
                 Err _ -> 
                     Task.ok state

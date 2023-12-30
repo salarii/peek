@@ -8,11 +8,40 @@ interface State
         getTerminalState,
         setSystemData,
         getSystemData,
-        getCommand,
-        setCommand, 
+#        getCommand,
+#        setCommand,
+        setAppMode,
+        getAppMode,
+        setFile,
+        getFile,
+        updatePrompt,
         StateType,
-        TerminalLineStateType]
+        TerminalLineStateType,
+        PatternType,
+        ModifiersType,
+        CommandType,
+        ConfigType,
+        AppModeType,
+        ]
     imports []
+
+PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
+
+ModifiersType  : [ NumberLines]
+
+CommandType : [
+    Search,
+    SearchSection U32 U32 PatternType,
+    FromLineToLine  I32 I32,
+    FromPatternToPattern PatternType PatternType,
+]
+
+ConfigType :
+    { command: CommandType, modifiers : Set ModifiersType, patterns : List PatternType  }
+
+SearchSetupType : [ None, Configured ConfigType ]
+
+AppModeType : [System, Search, Quitting]
 
 TerminalLineStateType : {
     commandHistory : List (List U8),
@@ -27,7 +56,16 @@ SystemDataType : {
     current : Str,
 }
 
-StateType := { history : List Str, lastCommandOut : List Str, activeCmd : Str, terminal : TerminalLineStateType, system : SystemDataType }
+StateType := {
+    history : List Str,
+    lastCommandOut : List Str,
+#    activeCmd : Str,
+    file: List Str,
+    terminal : TerminalLineStateType,
+    system : SystemDataType,  
+    config : SearchSetupType,
+    mode : AppModeType,
+    }
 
 create : Str -> StateType
 create = \ initialText ->
@@ -38,34 +76,60 @@ create = \ initialText ->
         cursor: { row: 1, col: 1},
         prompt : [],
     }
-    @StateType  {history : [], lastCommandOut : [], activeCmd : "", terminal : init, system : {homePath : "", current : ""}}
+
+    @StateType  {
+        history : [],
+        lastCommandOut : [],
+#        activeCmd : "",
+        file : [],
+        terminal : init,
+        system : {homePath : "", current : ""},
+        config : None,
+        mode : System,
+        }
 
 resetActiveCommand : StateType -> StateType
 resetActiveCommand = \ @StateType content ->
-    @StateType { content & activeCmd : "", lastCommandOut : [] }
+    @StateType { content & lastCommandOut : [] }
 
-setCommand : Str, StateType -> StateType
-setCommand = \command, @StateType content ->
-    @StateType { content & activeCmd : command } 
+#setCommand : StateType, Str -> StateType
+#setCommand = \@StateType content, command ->
+#    @StateType { content & activeCmd : command } 
 
-setCommandOutput : Str, StateType -> StateType
-setCommandOutput = \out, @StateType content ->
+setFile : StateType, List Str -> StateType
+setFile = \ @StateType content, file ->
+    @StateType { content & file : file } 
+
+setCommandOutput : StateType, Str -> StateType
+setCommandOutput = \ @StateType content, out ->
     splited = Str.split out "\n"
     @StateType { content &  history : (List.concat content.history splited ), lastCommandOut : splited  } 
 
-setTerminalState : TerminalLineStateType, StateType -> StateType
-setTerminalState = \ terminalState, @StateType content ->
+setTerminalState : StateType, TerminalLineStateType -> StateType
+setTerminalState = \ @StateType content, terminalState ->
     @StateType { content &  terminal : terminalState } 
 
-setSystemData : SystemDataType, StateType -> StateType
-setSystemData = \ systemData, @StateType content ->
-    prompt =
-        systemData.current
-        |> Str.concat " $> "
-        |> Str.toUtf8
+setSystemData : StateType, SystemDataType -> StateType
+setSystemData = \ @StateType content, systemData ->
+    @StateType { content &  system : systemData }
 
-    terminal =  content.terminal
-    @StateType { content &  system : systemData, terminal : { terminal & prompt : prompt } } 
+updatePrompt : StateType -> StateType
+updatePrompt = \  @StateType content ->
+    terminal =  content.terminal # I would like to place it  directly { content.terminal & prompt : prompt }
+    if content.mode == System then
+        prompt =
+            content.system.current
+            |> Str.concat " $> "
+            |> Str.toUtf8
+        @StateType { content &  terminal : { terminal & prompt : prompt } } 
+    else if content.mode == Search then
+        @StateType { content &  terminal : { terminal & prompt : [] } } 
+    else 
+        @StateType content
+
+setAppMode : StateType, AppModeType -> StateType
+setAppMode = \@StateType content, mode ->
+    @StateType { content & mode : mode }
 
 getCommandOutput : StateType -> List Str
 getCommandOutput = \@StateType content ->
@@ -75,9 +139,9 @@ getHistoryOutput : StateType -> List Str
 getHistoryOutput = \@StateType content ->
     content.history
 
-getCommand : StateType -> Str
-getCommand = \@StateType content ->
-    content.activeCmd
+#getCommand : StateType -> Str
+#getCommand = \@StateType content ->
+#    content.activeCmd
 
 getTerminalState : StateType -> TerminalLineStateType
 getTerminalState = \@StateType content ->
@@ -86,3 +150,11 @@ getTerminalState = \@StateType content ->
 getSystemData : StateType -> SystemDataType
 getSystemData = \ @StateType content ->
     content.system
+
+getFile : StateType -> List Str
+getFile = \ @StateType content ->
+    content.file 
+
+getAppMode : StateType -> AppModeType
+getAppMode = \@StateType content ->
+    content.mode
