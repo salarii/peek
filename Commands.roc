@@ -6,6 +6,7 @@ interface Commands
         pf.Task.{ Task },
         Utils,
         Regex,
+        SearchText,
         Regex.{ParsingResultType},
         State,
         System,
@@ -271,10 +272,9 @@ commandAnalysis = \ word, inState ->
             Err message -> Break (Err message)
         )
 
-recoverConfigFromInput : Str -> Result ConfigType Str
+recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \filterStr ->
-    Utils.tokenize filterStr
-    |> List.walkUntil (Ok { command: Search, modifiers : Set.empty {}, patterns : [] }) (\ state, word ->
+    List.walkUntil filterStr (Ok { command: Search, modifiers : Set.empty {}, patterns : [] }) (\ state, word ->
         when state is 
             Ok config -> 
                 when commandAnalysis word config is 
@@ -299,8 +299,16 @@ handleUserCommand = \ state, commandPatRaw ->
             exeState <- System.executeCommand state comLst |> Task.await
             Task.ok exeState
         else if mode == Search then 
-                # create config and execute it on file
-            Task.ok state
+            Task.ok  state
+            # configResult = recoverConfigFromInput comLst
+            #     when configResult is
+            #         Ok config -> 
+            #             toDisplay =
+            #                 State.getFile state
+            #                 |> SearchText.evalSearch config
+            #             Task.ok (State.setCommandOutput state toDisplay) 
+            #         Err message -> 
+            #             Task.ok (State.setCommandOutput state message) 
         else # Search 
             Task.ok state
 
@@ -341,7 +349,7 @@ handleUserCommand = \ state, commandPatRaw ->
 
 # rudimentary  tests
 expect
-    when recoverConfigFromInput  "  white "    is 
+    when recoverConfigFromInput (Utils.tokenize "  white ") is 
         Ok config ->
             config.patterns == [ Allow "white" ] && 
             Set.isEmpty config.modifiers == Bool.true  &&  
@@ -349,7 +357,7 @@ expect
         Err mes -> mes == "test search pattern"
         
 expect
-    when recoverConfigFromInput  "  b@white "    is 
+    when recoverConfigFromInput (Utils.tokenize "  b@white ") is 
         Ok config ->
             config.patterns == [ Blacklist "white" ] && 
             Set.isEmpty config.modifiers == Bool.true  &&  
@@ -358,7 +366,7 @@ expect
 
 
 expect
-    when recoverConfigFromInput  "  bR@^@[6-7]white "    is 
+    when recoverConfigFromInput (Utils.tokenize "  bR@^@[6-7]white ") is 
         Ok config ->
             config.patterns == [ Regex (Blacklist "^@[6-7]white") ] && 
             Set.isEmpty config.modifiers == Bool.true  &&  
@@ -367,7 +375,7 @@ expect
 
 
 expect
-    when recoverConfigFromInput  " white Nl@ "    is 
+    when recoverConfigFromInput (Utils.tokenize " white Nl@ ") is 
         Ok config ->
             dest = 
                 Set.empty {}
@@ -380,7 +388,7 @@ expect
 
 
 expect
-    when recoverConfigFromInput  "  fsflN@ "    is 
+    when recoverConfigFromInput (Utils.tokenize "  fsflN@ ")  is 
         Ok config ->
             config.patterns == [ Allow "fsflN@" ]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
@@ -388,7 +396,7 @@ expect
         Err mes -> mes == "test invalid command, empty pattern"
 
 expect
-    when recoverConfigFromInput  "  fsflN@tt "    is 
+    when recoverConfigFromInput  (Utils.tokenize "  fsflN@tt ") is 
         Ok config ->
             config.patterns == [ Allow "fsflN@tt" ]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
@@ -396,7 +404,7 @@ expect
         Err mes -> mes == "test invalid command"
 
 expect
-    when recoverConfigFromInput  " r@osa->@kosa white"    is 
+    when recoverConfigFromInput  (Utils.tokenize " r@osa->@kosa white")  is 
         Ok config ->
             config.patterns == [Allow "white"]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
@@ -404,7 +412,7 @@ expect
         Err mes -> mes == "test from pattern to pattern"
 
 expect
-    when recoverConfigFromInput  " s->1000@  white"    is 
+    when recoverConfigFromInput  (Utils.tokenize " s->1000@  white") is 
         Ok config ->
             config.patterns == [Allow "white"]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
@@ -412,7 +420,7 @@ expect
         Err mes -> mes == "test from start to 1000 "
 
 expect
-    when recoverConfigFromInput  " 100->e@  white"    is 
+    when recoverConfigFromInput  (Utils.tokenize " 100->e@  white")  is 
         Ok config ->
             config.patterns == [Allow "white"]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
@@ -420,7 +428,7 @@ expect
         Err mes -> mes == "test from 100 to e "
 
 expect
-    when recoverConfigFromInput  " ^10r@black[1-9]"    is 
+    when recoverConfigFromInput  (Utils.tokenize " ^10r@black[1-9]")    is 
         Ok config ->
             config.patterns == []  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
@@ -428,7 +436,7 @@ expect
         Err mes -> mes == "test region "
 
 expect
-    when recoverConfigFromInput  " <10@black"    is 
+    when recoverConfigFromInput  (Utils.tokenize " <10@black") is 
         Ok config ->
             config.patterns == []  &&
             Set.isEmpty  config.modifiers == Bool.true &&  

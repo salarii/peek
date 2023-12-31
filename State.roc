@@ -8,8 +8,6 @@ interface State
         getTerminalState,
         setSystemData,
         getSystemData,
-#        getCommand,
-#        setCommand,
         setAppMode,
         getAppMode,
         setFile,
@@ -59,7 +57,6 @@ SystemDataType : {
 StateType := {
     history : List Str,
     lastCommandOut : List Str,
-#    activeCmd : Str,
     file: List Str,
     terminal : TerminalLineStateType,
     system : SystemDataType,  
@@ -80,7 +77,6 @@ create = \ initialText ->
     @StateType  {
         history : [],
         lastCommandOut : [],
-#        activeCmd : "",
         file : [],
         terminal : init,
         system : {homePath : "", current : ""},
@@ -91,10 +87,6 @@ create = \ initialText ->
 resetActiveCommand : StateType -> StateType
 resetActiveCommand = \ @StateType content ->
     @StateType { content & lastCommandOut : [] }
-
-#setCommand : StateType, Str -> StateType
-#setCommand = \@StateType content, command ->
-#    @StateType { content & activeCmd : command } 
 
 setFile : StateType, List Str -> StateType
 setFile = \ @StateType content, file ->
@@ -138,10 +130,6 @@ getCommandOutput = \@StateType content ->
 getHistoryOutput : StateType -> List Str
 getHistoryOutput = \@StateType content ->
     content.history
-
-#getCommand : StateType -> Str
-#getCommand = \@StateType content ->
-#    content.activeCmd
 
 getTerminalState : StateType -> TerminalLineStateType
 getTerminalState = \@StateType content ->

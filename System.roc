@@ -48,7 +48,6 @@ executeCommand = \ state, lstCmd ->
                 Err (out,err) ->
                     Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stderr))
     
-    
     executeCd : Str -> Task StateType *
     executeCd = \ path ->
 
