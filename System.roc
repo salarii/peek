@@ -1,6 +1,4 @@
-# app "system"
-#     packages { pf: "https://github.com/roc-lang/basic-cli/releases/download/0.7.0/bkGby8jb0tmZYsy2hg1E_B2QrCgcSTxdUlHtETwm5m4.tar.br" }
-    
+
 interface  System
     exposes [executeCommand,updateData,guessPath, grouping, printGroup]
     imports [
@@ -18,12 +16,11 @@ interface  System
         State,
         State.{StateType}
         ]
-    # provides [main] to pf
 
-# the goal of embeded system terminal is to just facilitate navigation between location
+# the goal of embeded terminal is to just facilitate navigation between locations
 # ls, cd stuff like that should work 
 # I want to be able to locate and load log files for further processing 
-# maybe some simple operations nothing more
+# maybe some other simple operations nothing more (piping, bash scripts, I don't know how to do and I don't want even try )
 
 GuessEffectType : [Extend Str, ListDir (List Str), None]
 
@@ -128,11 +125,16 @@ guessPath = \ path ->
 
 isDirectoryPath : Str -> Task Bool  *
 isDirectoryPath = \ str ->
-    listResult <-listFiles str |> Task.attempt
-    when listResult is
-        Ok fileLst ->
-            Task.ok   (Bool.not (List.isEmpty fileLst))
-        Err err -> Task.ok  Bool.false
+    command =
+        Cmd.new "test"
+        |> Cmd.args ["-d",  str]
+        
+    result <- Cmd.status  command |> Task.attempt
+    when result is  
+        Ok out ->
+            Task.ok Bool.true
+        Err _ ->
+            Task.ok Bool.false
 
 listFiles : Str -> Task (List Str) *
 listFiles = \ path -> 
@@ -348,14 +350,6 @@ findCommon = \ lst ->
             [] -> ""
           ) 
 
-#main =
-    # command =
-    #     Cmd.new "test"
-    #     |> Cmd.args ["-f "]
-
-    #g  = grouping (List.repeat "japko" 20 |> List.append "tttttttddddddfsdf")  2 40
-
-    # stuff = "afsdfsf"
 
     
 

@@ -1,12 +1,12 @@
 interface  SearchText
-    exposes [regexWordMatch]
+    exposes [evalSearch]
     imports [
         Regex,
         State.{PatternType,ConfigType},
         Utils]
 
-# some operations will be slow : ) so up to user it will be to decide which one
-# to use in given  circumstances
+# some operations will be slow : ) so it will be up to user to decide which one
+# to use in given circumstances
 
 LineSearchType : [ Hit, Miss ]
 
