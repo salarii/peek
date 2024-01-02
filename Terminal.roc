@@ -105,7 +105,9 @@ init = \ appState ->
     {} <- Stdout.write clearLinePat |> Task.await 
     {} <- Stdout.write homeLinePat |> Task.await
     {} <- Stdout.write (Utils.utfToStr (State.getTerminalState appState).prompt) |> Task.await
-    setCursor appState
+    State.setTerminalHistory appState (State.getCommandHistory appState).sys
+    |> setCursor 
+    
 
 setCursor : StateType -> Task StateType *
 setCursor = \ appState ->
@@ -193,9 +195,10 @@ step = \ appState ->
                 GuessPath -> 
                     guessPath appState
                 EnterCommand ->
-                    exeState <- State.setTerminalState appState (enterHistory state)
-                       |> Commands.handleUserCommand  (Utils.utfToStr state.content) |> Task.await
-                    cursorPosOkState <- Terminal.displayCommand exeState (Utils.utfToStr state.content) |> Task.await
+                    historyHandledState <- State.setTerminalState appState (enterHistory state)
+                        |> System.storeHistory |> Task.await
+                    comHandledState<- Commands.handleUserCommand historyHandledState  (Utils.utfToStr state.content) |> Task.await
+                    cursorPosOkState <- Terminal.displayCommand comHandledState (Utils.utfToStr state.content) |> Task.await
                     Task.ok (State.resetActiveCommand cursorPosOkState)
                 NextCommand ->
                     Task.ok (State.setTerminalState appState (fromHistory state Next) )

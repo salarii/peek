@@ -120,7 +120,7 @@ analyseLine = \ lineData, patterns, register ->
 
     when  allowStageResult is 
         Ok allowStage ->
-            if Set.isEmpty sortPatterns.allow == Bool.true && 
+            if Set.isEmpty sortPatterns.allow == Bool.false && 
                 allowStage.status == Miss then
                 Ok register
             else
@@ -241,8 +241,8 @@ produceOutput = \ line ->
         [head,.. as tail ] ->
             head
             |> Str.concat (
-                List.map2 tail line.separator (\ left, right -> 
-                    Str.concat left ( Utils.withColor right  Red)
+                List.map2 line.separator tail (\ left, right -> 
+                    Str.concat  ( Utils.withColor left  Red) right
                 )
                 |> List.walk "" (\ phrase, str ->
                     Str.concat phrase str

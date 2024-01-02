@@ -12,6 +12,9 @@ interface State
         getAppMode,
         setFile,
         getFile,
+        setCommandHistory,
+        getCommandHistory,
+        setTerminalHistory,
         updatePrompt,
         StateType,
         TerminalLineStateType,
@@ -34,6 +37,8 @@ CommandType : [
     FromPatternToPattern PatternType PatternType,
 ]
 
+HistoryType : List (List U8)
+
 ConfigType :
     { command: CommandType, modifiers : Set ModifiersType, patterns : List PatternType  }
 
@@ -42,7 +47,7 @@ SearchSetupType : [ None, Configured ConfigType ]
 AppModeType : [System, Search, Quitting]
 
 TerminalLineStateType : {
-    commandHistory : List (List U8),
+    commandHistory : HistoryType,
     historyCnt : I32,
     content : List U8,
     cursor : { row : I32, col : I32 },
@@ -55,13 +60,14 @@ SystemDataType : {
 }
 
 StateType := {
-    history : List Str,
+    #history : List Str,
     lastCommandOut : List Str,
     file: List Str,
     terminal : TerminalLineStateType,
     system : SystemDataType,  
     config : SearchSetupType,
     mode : AppModeType,
+    commandsHistory : { sys : HistoryType,  search : HistoryType}
     }
 
 create : Str -> StateType
@@ -75,13 +81,14 @@ create = \ initialText ->
     }
 
     @StateType  {
-        history : [],
+        #history : [],
         lastCommandOut : [],
         file : [],
         terminal : init,
         system : {homePath : "", current : ""},
         config : None,
         mode : System,
+        commandsHistory : { sys : [],  search : []},
         }
 
 resetActiveCommand : StateType -> StateType
@@ -95,8 +102,9 @@ setFile = \ @StateType content, file ->
 setCommandOutput : StateType, Str -> StateType
 setCommandOutput = \ @StateType content, out ->
     splited = Str.split out "\n"
-    @StateType { content &  history : (List.concat content.history splited ), lastCommandOut : splited  } 
-
+    #@StateType { content &  history : (List.concat content.history splited ), lastCommandOut : splited  } 
+    @StateType { content &  lastCommandOut : splited  }
+    
 setTerminalState : StateType, TerminalLineStateType -> StateType
 setTerminalState = \ @StateType content, terminalState ->
     @StateType { content &  terminal : terminalState } 
@@ -127,9 +135,9 @@ getCommandOutput : StateType -> List Str
 getCommandOutput = \@StateType content ->
     content.lastCommandOut
 
-getHistoryOutput : StateType -> List Str
-getHistoryOutput = \@StateType content ->
-    content.history
+#getHistoryOutput : StateType -> List Str
+#getHistoryOutput = \@StateType content ->
+#    content.history
 
 getTerminalState : StateType -> TerminalLineStateType
 getTerminalState = \@StateType content ->
@@ -146,3 +154,16 @@ getFile = \ @StateType content ->
 getAppMode : StateType -> AppModeType
 getAppMode = \@StateType content ->
     content.mode
+    
+setCommandHistory : StateType, { sys : HistoryType,  search : HistoryType} -> StateType
+setCommandHistory = \@StateType content, history -> 
+    @StateType { content & commandsHistory  : history }
+    
+getCommandHistory : StateType -> { sys : HistoryType,  search : HistoryType}
+getCommandHistory = \@StateType content ->
+    content.commandsHistory 
+    
+setTerminalHistory : StateType, List (List U8) -> StateType
+setTerminalHistory = \@StateType content, history -> 
+    terminal =  content.terminal 
+    @StateType { content & terminal : { terminal & commandHistory : history, historyCnt : -1 } }

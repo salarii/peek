@@ -34,7 +34,9 @@ peekConsole = "This is peek app : ) \n\n"
 main =
     {} <- Stdout.line peekConsole |> Task.await    
     systemDataUpdated <-System.updateData (State.create  "") |> Task.await
-    initTerminalStateResult <-Terminal.init systemDataUpdated |> Task.attempt
+    setupHistoryUpdated <-System.setupHistory systemDataUpdated  |> Task.await
+    initTerminalStateResult <-Terminal.init setupHistoryUpdated |> Task.attempt
+    
     when initTerminalStateResult is
         Ok initTerminalState ->    
             {} <-Task.loop  initTerminalState mainLoop  |> Task.await

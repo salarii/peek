@@ -1,6 +1,6 @@
 
 interface  System
-    exposes [executeCommand,updateData,guessPath, grouping, printGroup]
+    exposes [executeCommand,updateData,guessPath, grouping, printGroup, setupHistory, storeHistory]
     imports [
         pf.Stdin, 
         pf.Stdout, 
@@ -14,7 +14,7 @@ interface  System
         pf.Env,
         Utils,
         State,
-        State.{StateType}
+        State.{StateType,AppModeType}
         ]
 
 # the goal of embeded terminal is to just facilitate navigation between locations
@@ -47,7 +47,6 @@ executeCommand = \ state, lstCmd ->
     
     executeCd : Str -> Task StateType *
     executeCd = \ path ->
-
         if Str.isEmpty path == Bool.true then
             
             systemData = State.getSystemData state
@@ -351,12 +350,106 @@ findCommon = \ lst ->
           ) 
 
 
-    
+isFilePath : Str -> Task Bool  *
+isFilePath = \ str ->
+    command =
+        Cmd.new "test"
+        |> Cmd.args ["-f",  str]
+        
+    result <- Cmd.status  command |> Task.attempt
+    when result is  
+        Ok out ->
+            Task.ok Bool.true
+        Err _ ->
+            Task.ok Bool.false
+            
+systemFile : Str
+systemFile = "/sys"
 
-    
-    
+searchFile : Str
+searchFile = "/search"
 
-
-
+switchHistory : StateType, AppModeType -> StateType
+switchHistory = \ state, mode -> 
+    currentHistory = (State.getTerminalState state).commandHistory
+    comHistory = State.getCommandHistory state
+    when mode is 
+        System -> 
+            State.setCommandHistory state {comHistory & search : currentHistory}
+            |> State.setTerminalHistory comHistory.sys
+        Search -> 
+            State.setCommandHistory state {comHistory & sys : currentHistory}
+            |> State.setTerminalHistory comHistory.search
+        _ -> state  
+             
+setupHistory : StateType -> Task StateType *
+setupHistory = \ state -> 
+    manipulateStore state setupHistoryInternal
     
+storeHistory : StateType -> Task StateType *
+storeHistory = \ state -> 
+    manipulateStore state storeHistoryInternal
     
+storeHistoryInternal : StateType, Str -> Task StateType *
+storeHistoryInternal = \ state, storePath -> 
+    sytemTermHistory = Str.concat storePath systemFile
+    searchTermHistory = Str.concat storePath searchFile
+    mode = State.getAppMode state
+    toStore =
+        (State.getTerminalState state).commandHistory
+        |> List.map ( \ cmd -> Utils.utfToStr cmd)
+        |> List.walk "" (\ out, cmd ->
+            Str.concat out  cmd 
+            |> Str.concat "\n" )
+    
+    when mode is 
+        System -> 
+            _<-File.writeUtf8 (Path.fromStr sytemTermHistory) toStore |> Task.attempt
+            Task.ok state
+        Search ->
+            _<-File.writeUtf8 (Path.fromStr searchTermHistory) toStore |> Task.attempt
+            Task.ok state
+        _ -> Task.ok  state   
+    
+setupHistoryInternal : StateType, Str -> Task StateType *
+setupHistoryInternal = \ state, storePath -> 
+    sytemTermHistory = Str.concat storePath systemFile
+    searchTermHistory = Str.concat storePath searchFile
+
+    sysResult <- File.readUtf8 (Path.fromStr sytemTermHistory) |> Task.attempt
+    sysHistory =
+        when sysResult is
+            Ok sys ->
+                
+                Utils.tokenizeNewLine sys
+                |> List.map ( \ com ->  Str.toUtf8 com )
+            Err _ -> []
+    searchResult <- File.readUtf8 (Path.fromStr searchTermHistory) |> Task.attempt
+    searchHistory =
+        when searchResult is
+            Ok search ->
+                
+                Utils.tokenizeNewLine search
+                |> List.map ( \ com ->  Str.toUtf8 com )
+            Err _ -> []
+    Task.ok ( State.setCommandHistory  state {sys : sysHistory, search : searchHistory} )
+    
+manipulateStore : StateType, (StateType, Str-> Task StateType a) -> Task StateType a
+manipulateStore = \ state, operation ->
+    homePath = (State.getSystemData state).homePath
+    if Str.isEmpty homePath == Bool.false then
+        storeDir = Str.concat homePath "/.peek"
+        isDirectoryResult <-isDirectoryPath storeDir |>  Task.attempt
+        when isDirectoryResult is 
+            Ok isDirectory ->
+                if isDirectory == Bool.true then
+                    operation state storeDir
+                else 
+                    _<-Dir.create (Path.fromStr storeDir) |> Task.attempt
+                    Task.ok state
+            Err _ ->
+                Task.ok state
+        
+    else 
+        Task.ok state
+

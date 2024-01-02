@@ -299,16 +299,15 @@ handleUserCommand = \ state, commandPatRaw ->
             exeState <- System.executeCommand state comLst |> Task.await
             Task.ok exeState
         else if mode == Search then 
-            Task.ok  state
-            # configResult = recoverConfigFromInput comLst
-            #     when configResult is
-            #         Ok config -> 
-            #             toDisplay =
-            #                 State.getFile state
-            #                 |> SearchText.evalSearch config
-            #             Task.ok (State.setCommandOutput state toDisplay) 
-            #         Err message -> 
-            #             Task.ok (State.setCommandOutput state message) 
+            configResult = recoverConfigFromInput comLst
+                when configResult is
+                    Ok config -> 
+                        toDisplay =
+                            State.getFile state
+                            |> SearchText.evalSearch config
+                        Task.ok (State.setCommandOutput state toDisplay) 
+                    Err message -> 
+                        Task.ok (State.setCommandOutput state message) 
         else # Search 
             Task.ok state
 
