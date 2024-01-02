@@ -6,10 +6,10 @@ interface  System
         guessPath,
         grouping,
         printGroup,
-        printGroupWithMap,
+        printGroupWithSet,
         setupHistory,
         storeHistory,
-        checkListOfDirs,
+        checkListOfDirsGiveSet,
         stripPath,
         listEntries]
 
@@ -39,17 +39,16 @@ GuessEffectType : [Extend Str, ListDir (List Str), None]
 executeCommand : StateType, List Str -> Task StateType *
 executeCommand = \ state, lstCmd ->
 
-    formatLsType : Str, List Bool -> Str
+    formatLsType : Str, Set Str -> Str
     formatLsType = \ out, dirInfo ->
-        when dirInfo is 
-            [] -> 
+        if Set.isEmpty  dirInfo then
                 Utils.tokenizeNewLine out
                 |> grouping  4 100
                 |> printGroup 
-            _ -> 
+        else
                 Utils.tokenizeNewLine out
                 |> grouping  4 100
-                |> printGroupWithMap dirInfo
+                |> printGroupWithSet dirInfo
             
     execute : Cmd, Task ( Bool, Str ) * -> Task StateType *
     execute = \ command, lsFormat ->
@@ -62,12 +61,12 @@ executeCommand = \ state, lstCmd ->
                         if format.0 == Bool.true then
                             lsOut = (Utils.utfToStr out.stdout)
                             if Str.isEmpty format.1 then
-                                Task.ok  (State.setCommandOutput state (formatLsType lsOut []) )   
+                                Task.ok  (State.setCommandOutput state (formatLsType lsOut (Set.empty {} )) )   
                             else 
                                 tokenized = Utils.tokenizeNewLine lsOut
 
                                 tokenized
-                                |> List.walk (Task.ok []) (\ dirSearch, line ->
+                                |> List.walk (Task.ok (Set.empty {})) (\ dirSearch, line ->
                                     when  Utils.tokenize line is 
                                         [entry] ->
                                             dirLstResult <- dirSearch |> Task.attempt
@@ -77,19 +76,17 @@ executeCommand = \ state, lstCmd ->
                                                 |>Str.concat entry
                                             isDir <- isDirectoryPath path |> Task.attempt
                                             when dirLstResult is
-                                                Ok  dirLst ->
-                                                    Task.ok (List.append dirLst (Result.withDefault isDir Bool.false ))
+                                                Ok  dirSet ->
+                                                    if (Result.withDefault isDir Bool.false ) == Bool.true then
+                                                        Task.ok (Set.insert dirSet entry)
+                                                    else
+                                                         Task.ok dirSet 
                                                 Err _ -> dirSearch 
                                         _ -> dirSearch )
                                 |> ( \ allDirs -> 
                                     dirs <- allDirs |> Task.attempt
-                                    colorInfo = (Result.withDefault dirs [])
-                                    dbg List.len colorInfo
-                                    dbg   List.len tokenized
-                                    if List.len colorInfo == List.len tokenized then
-                                        Task.ok  (State.setCommandOutput state (formatLsType lsOut colorInfo))   
-                                    else
-                                        Task.ok  (State.setCommandOutput state (formatLsType lsOut []))
+                                    colorInfo = (Result.withDefault dirs  (Set.empty {}))
+                                    Task.ok  (State.setCommandOutput state (formatLsType lsOut colorInfo))
                                     )  
                         else
                             Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stdout))
@@ -329,17 +326,30 @@ grouping = \ textLst, seaparatorLen, lineSize ->
             { content: textLst, colCnt : 1 }
     findGroup 4
 
-checkListOfDirs : List Str -> Task (List Bool) *
-checkListOfDirs = \ dirs ->
-        List.walk dirs (Task.ok []) (\state, dir ->
-            dirPresence <- state |> Task.attempt
-            result <- isDirectoryPath dir |> Task.attempt
-            if Result.withDefault result Bool.false == Bool.true then
-                Task.ok (List.append (Result.withDefault dirPresence [])  Bool.true)
-            else
-                Task.ok (List.append (Result.withDefault dirPresence [])  Bool.false)
-        )
-    
+checkListOfDirsGiveSet : List Str -> Task (Set Str) *
+checkListOfDirsGiveSet = \ dirs ->
+    onlyDirsTask =
+            (List.walk dirs (Task.ok []) (\state, dir ->
+                dirPresence <- state |> Task.attempt
+                result <- isDirectoryPath dir |> Task.attempt
+                if Result.withDefault result Bool.false == Bool.true then
+                    Task.ok (List.append (Result.withDefault dirPresence [])  dir)
+                else
+                    Task.ok (Result.withDefault dirPresence [])
+            ))
+        # this code  enters infinite   loop bug??
+        #List.walk dirs (Task.ok (Set.empty {})) (\state, dir ->
+        #    dirPresence <- state |> Task.attempt
+        #    result <- isDirectoryPath dir |> Task.attempt
+        #    if Result.withDefault result Bool.false == Bool.true then
+        #        Task.ok (Set.insert (Result.withDefault dirPresence (Set.empty {}))  dir)
+        #    else
+        #        state
+        #)
+
+    onlyDirsResult<-onlyDirsTask |> Task.attempt
+    Task.ok ( Set.fromList (Result.withDefault onlyDirsResult []) )
+     
 
 printGroup :  { content: List Str, colCnt : Nat } -> Str
 printGroup = \ group -> 
@@ -351,10 +361,10 @@ printGroup = \ group ->
     )
     |>( \ result -> Str.concat result.0 "\n\r")
 
-printGroupWithMap :  { content: List Str, colCnt : Nat }, List Bool -> Str
-printGroupWithMap = \ group, map -> 
-    List.map2 group.content map ( \ word, color ->
-        if color == Bool.true then
+printGroupWithSet :  { content: List Str, colCnt : Nat }, Set Str -> Str
+printGroupWithSet = \ group, set -> 
+    List.map group.content  ( \ word ->
+        if Set.contains set (Str.trimEnd word)  == Bool.true then
             Utils.withColor word Red
         else
             word

@@ -73,14 +73,21 @@ guessPath : StateType -> Task StateType *
 guessPath = \ appState ->
     listDir : List Str -> Task StateType * 
     listDir = \ lst ->
-        dirPresence <-System.checkListOfDirs lst |> Task.attempt
+        dirPresence <-System.checkListOfDirsGiveSet lst |> Task.attempt
+        dirs =
+            Set.map ( Result.withDefault dirPresence (Set.empty {}) ) ( \ pathDir ->
+                System.stripPath pathDir
+                    |> Result.withDefault {before : "", after : pathDir }
+                    |> (\ pathSplitted -> pathSplitted.after )
+            )
+       
         group = 
             List.map lst (\ path ->
                 System.stripPath path
                 |> Result.withDefault {before : "", after : path }
                 |> (\ pathSplitted -> pathSplitted.after ))
             |> System.grouping 3 100
-            |> System.printGroupWithMap  ( Result.withDefault dirPresence (List.repeat  Bool.false (List.len lst)) )
+            |> System.printGroupWithSet  dirs
 
         {} <- Stdout.write "\n" |> Task.await
         {} <- Stdout.write homeLinePat |> Task.await
