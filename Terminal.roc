@@ -5,6 +5,7 @@ interface  Terminal
         pf.Stdin,
         pf.Task.{ Task },
         pf.Tty,
+        pf.Path,
         Regex,
         Utils,
         State,
@@ -70,6 +71,23 @@ getPromptSize = \ state ->
 
 guessPath : StateType -> Task StateType * 
 guessPath = \ appState ->
+    listDir : List Str -> Task StateType * 
+    listDir = \ lst ->
+        dirPresence <-System.checkListOfDirs lst |> Task.attempt
+        group = 
+            List.map lst (\ path ->
+                System.stripPath path
+                |> Result.withDefault {before : "", after : path }
+                |> (\ pathSplitted -> pathSplitted.after ))
+            |> System.grouping 3 100
+            |> System.printGroupWithMap  ( Result.withDefault dirPresence (List.repeat  Bool.false (List.len lst)) )
+
+        {} <- Stdout.write "\n" |> Task.await
+        {} <- Stdout.write homeLinePat |> Task.await
+        {} <- Stdout.write group |> Task.await
+        _ <- Stdout.write homeLinePat |> Task.attempt
+        Task.ok appState
+
     terminal = State.getTerminalState  appState
     Utils.utfToStr terminal.content
     |> Utils.tokenize
@@ -83,20 +101,14 @@ guessPath = \ appState ->
                                 Extend str -> 
                                     Task.ok (State.setTerminalState appState (modifyLine terminal (Characters (Str.toUtf8 str))) )
                                 ListDir lst ->
-
-                                    group = 
-                                        System.grouping lst 3 100
-                                        |> System.printGroup
-
-                                    {} <- Stdout.write "\n" |> Task.await
-                                    {} <- Stdout.write homeLinePat |> Task.await
-                                    {} <- Stdout.write group |> Task.await
-                                    _ <- Stdout.write homeLinePat |> Task.attempt
-                                    Task.ok appState
+                                    listDir lst
                                 None -> Task.ok appState
 
                         Err _ -> Task.ok appState
-                [] -> Task.ok appState ) 
+                [] ->
+                    listedTop <- System.listEntries "." |> Task.attempt
+                    Result.withDefault listedTop []
+                    |> listDir ) 
 
 
 init : StateType -> Task StateType *

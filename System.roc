@@ -1,6 +1,18 @@
 
 interface  System
-    exposes [executeCommand,updateData,guessPath, grouping, printGroup, setupHistory, storeHistory]
+    exposes [
+        executeCommand,
+        updateData,
+        guessPath,
+        grouping,
+        printGroup,
+        printGroupWithMap,
+        setupHistory,
+        storeHistory,
+        checkListOfDirs,
+        stripPath,
+        listEntries]
+
     imports [
         pf.Stdin, 
         pf.Stdout, 
@@ -27,21 +39,64 @@ GuessEffectType : [Extend Str, ListDir (List Str), None]
 executeCommand : StateType, List Str -> Task StateType *
 executeCommand = \ state, lstCmd ->
 
-    formatLsType : Str -> Str
-    formatLsType = \ out -> 
-        Utils.tokenizeNewLine out
-        |> grouping  4 100
-        |> printGroup   
-    
-    execute : Cmd, Bool -> Task StateType *
+    formatLsType : Str, List Bool -> Str
+    formatLsType = \ out, dirInfo ->
+        when dirInfo is 
+            [] -> 
+                Utils.tokenizeNewLine out
+                |> grouping  4 100
+                |> printGroup 
+            _ -> 
+                Utils.tokenizeNewLine out
+                |> grouping  4 100
+                |> printGroupWithMap dirInfo
+            
+    execute : Cmd, Task ( Bool, Str ) * -> Task StateType *
     execute = \ command, lsFormat ->
         result <- Cmd.output  command |> Task.attempt
             when result is  
                 Ok out ->
-                    if lsFormat == Bool.true then 
-                        Task.ok  (State.setCommandOutput state (formatLsType (Utils.utfToStr out.stdout)))
-                    else 
-                        Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stdout))
+                    lsFormatResult <- lsFormat |> Task.attempt
+                    when lsFormatResult is 
+                    Ok format -> 
+                        if format.0 == Bool.true then
+                            lsOut = (Utils.utfToStr out.stdout)
+                            if Str.isEmpty format.1 then
+                                Task.ok  (State.setCommandOutput state (formatLsType lsOut []) )   
+                            else 
+                                tokenized = Utils.tokenizeNewLine lsOut
+
+                                tokenized
+                                |> List.walk (Task.ok []) (\ dirSearch, line ->
+                                    when  Utils.tokenize line is 
+                                        [entry] ->
+                                            dirLstResult <- dirSearch |> Task.attempt
+                                            # assume // will work as "/"
+                                            path =
+                                                Str.concat format.1 "/"
+                                                |>Str.concat entry
+                                            isDir <- isDirectoryPath path |> Task.attempt
+                                            when dirLstResult is
+                                                Ok  dirLst ->
+                                                    Task.ok (List.append dirLst (Result.withDefault isDir Bool.false ))
+                                                Err _ -> dirSearch 
+                                        _ -> dirSearch )
+                                |> ( \ allDirs -> 
+                                    dirs <- allDirs |> Task.attempt
+                                    colorInfo = (Result.withDefault dirs [])
+                                    dbg List.len colorInfo
+                                    dbg   List.len tokenized
+                                    if List.len colorInfo == List.len tokenized then
+                                        Task.ok  (State.setCommandOutput state (formatLsType lsOut colorInfo))   
+                                    else
+                                        Task.ok  (State.setCommandOutput state (formatLsType lsOut []))
+                                    )  
+                        else
+                            Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stdout))
+                    Err _ ->         
+                        Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stdout)) 
+
+                        
                 Err (out,err) ->
                     Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stderr))
     
@@ -69,16 +124,49 @@ executeCommand = \ state, lstCmd ->
                     else
                         Task.ok state
                 Err _ -> Task.ok state
+                
+    analyzeLsData : List Str, Bool -> Task ( Bool, Str) *
+    analyzeLsData = \ args, isLs ->
+        if isLs == Bool.true then 
+            when args is 
+                [] ->
+                    Task.ok (Bool.true, ".")
+                _ ->
+                    # I know it is weird but things like that should work,
+                    # and they don't. This is kind of weakness of this Task concept. (maybe is just me but working, tasks <-> other stuff, is difficult ) 
+                    #pathResult <- List.walkUntil args ( Task.ok "")  (\ _state, arg ->
+                    #            isDir <- isDirectoryPath arg |> Task.attempt
+                    #            if (Result.withDefault isDir Bool.false ) == Bool.true then 
+                    #                Break (Task.ok arg)
+                    #            else 
+                    #                Continue (Task.ok "")
+                    #        )
+                    #    |> Task.attempt
+                    pathResult <- List.walk args ( Task.ok "")  (\ spoted, arg ->
+                                isEnd <- spoted |> Task.attempt 
+                                if Str.isEmpty (Result.withDefault isEnd "") == Bool.false then
+                                    spoted
+                                else
+                                    isDir <- isDirectoryPath arg |> Task.attempt
+                                    if (Result.withDefault isDir Bool.false ) == Bool.true then 
+                                        Task.ok arg
+                                    else 
+                                        Task.ok ""
+                            )
+                        |> Task.attempt
+                    Task.ok (Bool.true, Result.withDefault pathResult "")
+        else 
+            Task.ok (Bool.false, "")
 
     when lstCmd is 
         [] -> Task.ok state
         [name] ->
             if name == "cd" then
-                executeCd ""
+                executeCd "" 
             else
                 command =
                     Cmd.new name
-                execute command (name =="ls")
+                execute command (analyzeLsData [] (name == "ls"))
         [name, .. as args] ->
             if name == "cd" then
                 when args is 
@@ -88,17 +176,17 @@ executeCommand = \ state, lstCmd ->
                 command =
                     Cmd.new name
                     |> Cmd.args args
-                execute command (name =="ls")
+                execute command (analyzeLsData args (name == "ls"))
 
 guessPath : Str -> Task GuessEffectType *
 guessPath = \ path ->
-    listedTop <- listFiles path |> Task.attempt
+    listedTop <- listEntries path |> Task.attempt
     when listedTop is 
         Ok listed ->
             if List.isEmpty listed then
                 when stripPath path is 
                     Ok splitted -> 
-                        listedBase <- listFiles splitted.before |> Task.attempt
+                        listedBase <- listEntries splitted.before |> Task.attempt
                         when listedBase is 
                             Ok base ->
                                 if List.isEmpty base then
@@ -135,8 +223,8 @@ isDirectoryPath = \ str ->
         Err _ ->
             Task.ok Bool.false
 
-listFiles : Str -> Task (List Str) *
-listFiles = \ path -> 
+listEntries : Str -> Task (List Str) *
+listEntries = \ path -> 
     accessResult <-Dir.list  (Path.fromStr path) |> Task.attempt
     when accessResult is
          Ok fileLst ->
@@ -241,6 +329,18 @@ grouping = \ textLst, seaparatorLen, lineSize ->
             { content: textLst, colCnt : 1 }
     findGroup 4
 
+checkListOfDirs : List Str -> Task (List Bool) *
+checkListOfDirs = \ dirs ->
+        List.walk dirs (Task.ok []) (\state, dir ->
+            dirPresence <- state |> Task.attempt
+            result <- isDirectoryPath dir |> Task.attempt
+            if Result.withDefault result Bool.false == Bool.true then
+                Task.ok (List.append (Result.withDefault dirPresence [])  Bool.true)
+            else
+                Task.ok (List.append (Result.withDefault dirPresence [])  Bool.false)
+        )
+    
+
 printGroup :  { content: List Str, colCnt : Nat } -> Str
 printGroup = \ group -> 
     List.walk group.content ("",0) (\state, word ->
@@ -261,11 +361,11 @@ printGroupWithMap = \ group, map ->
     ) 
     |> List.walk  ("",0) (\state, word ->
         if state.1 == group.colCnt - 1 then
-            (Str.concat state.0 (Str.concat word "\n"), 0 )
+            (Str.concat state.0 (Str.concat word "\n\r"), 0 )
         else
             (Str.concat state.0 word, state.1 + 1 )
     )
-    |>( \ result -> Str.concat result.0 "\n")
+    |>( \ result -> Str.concat result.0 "\n\r")
 
 directoryMap : Str, List Str -> Task (List Bool)  *
 directoryMap = \ path, items ->
