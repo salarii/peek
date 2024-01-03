@@ -22,20 +22,18 @@ dummyFun = \  parsResult, config ->
 
 colorTag : ParsingResultType, ConfigType -> Result ConfigType Str
 colorTag = \  parsResult, config ->
-    { command: com, modifiers : mod, patterns : lst } = config
-    when (com, lst) is
-        (Search, [Allow pat]) ->
-            Ok { config & patterns : [Color pat ] }
-        (Search, [Regex (Allow pat)]) -> 
+    when (config.command, config.patterns) is
+        (None, [Allow pat]) ->
+            Ok { config & command : Search, patterns : [Color pat ] }
+        (Search, [Regex (Allow pat)])-> 
             Ok { config & patterns : [Regex (Color pat) ] }
         _ -> Ok config
 
 regex : ParsingResultType, ConfigType -> Result ConfigType Str
 regex = \  parsResult, config ->
-    { command: com, modifiers : mod, patterns : lst } = config
-    when (com, lst) is
-        (Search, [Allow pat]) ->
-            Ok { config & patterns : [Regex (Allow pat) ] }
+    when (config.command, config.patterns) is
+        (None, [Allow pat]) ->
+            Ok { config & command : Search, patterns : [Regex (Allow pat) ] }
         (Search, [Color pat]) -> 
             Ok { config & patterns : [Regex (Color pat) ] }
         (Search, [Blacklist pat]) -> 
@@ -46,12 +44,11 @@ regex = \  parsResult, config ->
 
 createSection : ParsingResultType, ConfigType -> Result ConfigType Str
 createSection = \  parsResult, config ->
-    { command: com, modifiers : mod, patterns : lst } = config
-    when (com, lst ) is
-        (Search, [pattern ]) ->
+    when (config.command, config.patterns ) is
+        (Search, [pattern ]) | (None, [pattern ]) ->
             when pattern is 
                 Color _ -> Err "don't mix color and command"
-                _ ->        
+                _ ->      
                     when Regex.getValue [0] 0 parsResult.captured is 
                         Ok operation ->
                             arg1Result = Regex.getValue [1] 0 parsResult.captured  
@@ -60,6 +57,7 @@ createSection = \  parsResult, config ->
                                     when operation is 
                                         [ 94 ] -> 
                                             Ok {
+                                                config &
                                                 command:
                                                     SearchSection
                                                         (Utils.asciiArrayToNumber arg1 Str.toU32)
@@ -70,6 +68,7 @@ createSection = \  parsResult, config ->
                                                 }
                                         [ 60 ] ->
                                             Ok {
+                                                config &
                                                 command:
                                                     SearchSection
                                                         (Utils.asciiArrayToNumber arg1 Str.toU32)
@@ -80,6 +79,7 @@ createSection = \  parsResult, config ->
                                                 }
                                         [ 62 ] -> 
                                             Ok {
+                                                config &
                                                 command:
                                                     SearchSection
                                                         0
@@ -101,10 +101,9 @@ createNumberLines = \  parsResult, config ->
 
 createBlackListed : ParsingResultType, ConfigType -> Result ConfigType Str
 createBlackListed = \  parsResult, config ->
-    { command: com, modifiers : mod, patterns : lst } = config
-    when (com, lst ) is
-        (Search, [ Allow pat ])  ->
-                Ok { config & patterns : [Blacklist pat] }
+    when (config.command, config.patterns) is
+        (None, [ Allow pat ])  ->
+                Ok { config & command : Search, patterns : [Blacklist pat] }
         (Search, [Regex ( Allow pat ) ])  ->
                 Ok { config & patterns : [Regex ( Blacklist pat)] }
         _ -> Ok  config
@@ -138,68 +137,53 @@ createPatternToPattern = \  parsResult, config ->
         
 createLineToLine : ParsingResultType, ConfigType -> Result ConfigType Str
 createLineToLine = \  parsResult, config ->
-    { command: com, modifiers : mod, patterns : lst } = config
-    when com is
-        Search  ->  
-            when ( 
-                Regex.getValue [0] 0 parsResult.captured,
-                Regex.getValue [1] 0 parsResult.captured)  is
-                (Ok pat1,Ok pat2) ->
-                    when (pat1, pat2) is 
-                        (['s'],['e'])->
-                            Ok { config & command : FromLineToLine  0 -1 }
-                        (['s'],val)->
-                            Ok { config & command : FromLineToLine  0 (Utils.asciiArrayToNumber val Str.toI32) }
-                        (val,['e'])->
-                            Ok { config & command : FromLineToLine  (Utils.asciiArrayToNumber val Str.toI32) -1 }
-                        (valStart,valEnd)->
-                            Ok { config & command : FromLineToLine  (Utils.asciiArrayToNumber valStart Str.toI32)  (Utils.asciiArrayToNumber valEnd Str.toI32) }
-                        _ ->
-                            Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
-                _ -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
-        _ -> Ok config
+    #{ command: com, modifiers : mod, patterns : lst } = config
+      
+    when ( 
+        Regex.getValue [0] 0 parsResult.captured,
+        Regex.getValue [1] 0 parsResult.captured)  is
+            (Ok pat1,Ok pat2) ->
+                when (pat1, pat2) is 
+                    (['s'],['e'])->
+                        Ok { config & limit : List.append config.limit (FromLineToLine  1 -1) }
+                    (['s'],val)->
+                        Ok { config & limit : List.append config.limit (FromLineToLine  1 (Utils.asciiArrayToNumber val Str.toI32)) }
+                    (val,['e'])->
+                        Ok { config & limit : List.append config.limit (FromLineToLine  (Utils.asciiArrayToNumber val Str.toI32) -1) }
+                    (valStart,valEnd)->
+                        Ok { config & limit : List.append config.limit (FromLineToLine  (Utils.asciiArrayToNumber valStart Str.toI32)  (Utils.asciiArrayToNumber valEnd Str.toI32)) }
+                    _ ->
+                        Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
+            _ -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
     
 handleOthers : ParsingResultType, ConfigType -> Result ConfigType Str
 handleOthers = \  parsResult, config ->
     when (Regex.getValue [0, 0] 0 parsResult.captured,
         Regex.getValue [0, 1] 0 parsResult.captured ) is
         (Ok modifiers, Ok pattern) ->
-            # bit arbitrary and messy but consider wrong command just pattern, (later meybe change  this to show worning)
+            # bit arbitrary and messy but consider that wrong command is just allow pattern, (later meybe change  this to show warning)
             if List.isEmpty modifiers == Bool.true then
                 Ok { config & patterns : List.append config.patterns (Allow (Utils.utfToStr pattern)) }
             else if List.isEmpty pattern == Bool.true then
                 Ok { config & patterns : List.append config.patterns (Allow (Utils.utfToStr modifiers)) }
             else
-                modifierAnalysis (Utils.utfToStr modifiers) { command : Search, modifiers : Set.empty {},patterns : [Allow (Utils.utfToStr pattern)] }
+                modifierAnalysis (Utils.utfToStr modifiers) (State.createConfig [] None (Set.empty {}) [Allow (Utils.utfToStr pattern)] )
                 |> ( \ partialConfigResult ->
+                    merged = 
+                        modifiers
+                        |> List.concat pattern
+                        |> Utils.utfToStr
                     when partialConfigResult is 
                         Ok partialConfig ->
-                            { command: com, modifiers : mod, patterns : lst } = config
-                            when com is
-                                Search -> Ok {command:  partialConfig.command, modifiers : mod, patterns :  List.concat lst partialConfig.patterns}
-                                _ -> Ok {config  & patterns : List.concat lst partialConfig.patterns}
-                        Err message -> Err message )
-                |> ( \ updatedConfigResult  ->  
-                    merged = 
-                            modifiers
-                            |> List.concat pattern
-                            |> Utils.utfToStr
-                    when updatedConfigResult is
-                        Ok updatedConfig -> 
-                            { command: com, modifiers : mod, patterns : lst } = updatedConfig
-                            when (com, lst) is 
-                                (Search, [Allow pat ]) ->
-                                    if (Utils.utfToStr pattern) == pat && Set.isEmpty mod == Bool.true then 
-                                        Ok { command : Search, modifiers : Set.empty {},patterns : [Allow merged] }
-                                    else
-                                        updatedConfigResult   
-                                _ -> updatedConfigResult
+                            # merge current subcommand to config
+                            if partialConfig.command == None then
+                                Ok {config & patterns : List.append config.patterns (Allow merged)}
+                            else
+                                Ok {partialConfig  & limit : List.concat config.limit partialConfig.limit, patterns: List.concat config.patterns partialConfig.patterns, modifiers: Set.union config.modifiers partialConfig.modifiers }
                         Err message -> 
-                            Ok { command : Search, modifiers : Set.empty {},patterns : [Allow merged] } )
+                            Ok {config & patterns : List.append config.patterns (Allow merged)})
 
         _ -> Err "Error when processing \(Utils.utfToStr parsResult.matched) comand"
-
-
 
 modifiersHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
 modifiersHandlers =
@@ -274,7 +258,7 @@ commandAnalysis = \ word, inState ->
 
 recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \filterStr ->
-    List.walkUntil filterStr (Ok { command: Search, modifiers : Set.empty {}, patterns : [] }) (\ state, word ->
+    List.walkUntil filterStr (Ok (State.createConfig [] Search (Set.empty {}) [] )) (\ state, word ->
         when state is 
             Ok config -> 
                 when commandAnalysis word config is 
@@ -415,7 +399,7 @@ expect
         Ok config ->
             config.patterns == [Allow "white"]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == FromLineToLine 0 1000    
+            config.limit == [FromLineToLine 1 1000]
         Err mes -> mes == "test from start to 1000 "
 
 expect
@@ -423,7 +407,7 @@ expect
         Ok config ->
             config.patterns == [Allow "white"]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == FromLineToLine 100 -1   
+            config.limit == [FromLineToLine 100 -1]   
         Err mes -> mes == "test from 100 to e "
 
 expect

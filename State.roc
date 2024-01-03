@@ -23,6 +23,7 @@ interface State
         CommandType,
         ConfigType,
         AppModeType,
+        createConfig,
         ]
     imports []
 
@@ -31,16 +32,16 @@ PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist
 ModifiersType  : [ NumberLines]
 
 CommandType : [
+    None,
     Search,
     SearchSection U32 U32 PatternType,
-    FromLineToLine  I32 I32,
     FromPatternToPattern PatternType PatternType,
 ]
 
 HistoryType : List (List U8)
 
 ConfigType :
-    { command: CommandType, modifiers : Set ModifiersType, patterns : List PatternType  }
+    { limit : List [FromLineToLine  I32 I32],  command: CommandType, modifiers : Set ModifiersType, patterns : List PatternType }
 
 SearchSetupType : [ None, Configured ConfigType ]
 
@@ -69,6 +70,13 @@ StateType := {
     mode : AppModeType,
     commandsHistory : { sys : HistoryType,  search : HistoryType}
     }
+
+
+
+createConfig :  List [FromLineToLine  I32 I32], CommandType, Set ModifiersType, List PatternType -> ConfigType
+createConfig = \  limit, command, modifiers, patterns -> 
+    {limit : limit, command : command, modifiers : modifiers, patterns : patterns}
+
 
 create : Str -> StateType
 create = \ initialText ->
