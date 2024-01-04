@@ -43,11 +43,11 @@ executeCommand = \ state, lstCmd ->
     formatLsType = \ out, dirInfo ->
         if Set.isEmpty  dirInfo then
                 Utils.tokenizeNewLine out
-                |> grouping  4 100
+                |> grouping  4 140
                 |> printGroup 
         else
                 Utils.tokenizeNewLine out
-                |> grouping  4 100
+                |> grouping  4 140
                 |> printGroupWithSet dirInfo
             
     execute : Cmd, Task ( Bool, Str ) * -> Task StateType *
@@ -176,37 +176,52 @@ executeCommand = \ state, lstCmd ->
                 execute command (analyzeLsData args (name == "ls"))
 
 guessPath : Str -> Task GuessEffectType *
-guessPath = \ path ->
-    listedTop <- listEntries path |> Task.attempt
-    when listedTop is 
-        Ok listed ->
-            if List.isEmpty listed then
-                when stripPath path is 
-                    Ok splitted -> 
-                        listedBase <- listEntries splitted.before |> Task.attempt
-                        when listedBase is 
-                            Ok base ->
-                                if List.isEmpty base then
-                                    Task.ok None
-                                else
-                                    cleanPath =
-                                        List.map base (\ subPath -> 
-                                             when Str.splitLast subPath "/" is 
-                                                Ok splited -> splited.after
-                                                Err _ -> subPath
-                                            )
-
-                                    Task.ok (guessEffect cleanPath splitted.after)
-                            Err _ -> Task.ok None
-                    Err _ -> Task.ok None
-            else
-                when Str.toUtf8 path is 
-                    [..,'/'] -> 
-                        Task.ok (ListDir listed)
-                    _ ->
-                        Task.ok (Extend "/")
-        Err _ -> Task.ok None
-
+guessPath = \ pathRaw ->
+    path = 
+        if Str.startsWith pathRaw "fm@" == Bool.true then
+            Str.replaceFirst pathRaw "fm@" "" 
+            |> (\ str -> 
+                if Str.isEmpty str then
+                    "./"
+                else 
+                    str)
+        else
+            pathRaw
+    isDir <- isDirectoryPath path|> Task.attempt
+    if Result.withDefault isDir Bool.false == Bool.false then
+        splitted = stripPath path
+        listedBase <- listEntries splitted.before |> Task.attempt
+        when listedBase is 
+            Ok base ->
+                if List.isEmpty base then
+                    Task.ok None
+                else
+                    cleanPath =
+                        List.map base (\ subPath -> 
+                            when Str.splitLast subPath "/" is 
+                                Ok splited -> splited.after
+                                Err _ -> subPath
+                            )
+                    Task.ok (guessEffect cleanPath splitted.after)
+            Err _ -> Task.ok None
+    else
+        listedTop <- listEntries path |> Task.attempt
+        when listedTop is 
+            Ok listed ->
+                when listed is 
+                    [] ->
+                        Task.ok None
+                    [..,elem] ->
+                        when Str.toUtf8 path is 
+                            [..,'/'] -> 
+                                if List.len listed == 1 then
+                                    Task.ok (Extend ((stripPath elem).after))
+                                else 
+                                    Task.ok (ListDir listed)
+                            _ ->
+                                Task.ok (Extend "/")
+            Err _ -> Task.ok None
+        
 isDirectoryPath : Str -> Task Bool  *
 isDirectoryPath = \ str ->
     command =
@@ -391,12 +406,11 @@ directoryMap = \ path, items ->
            Err _ -> Task.ok (List.append lst Bool.false)
         )
 
-stripPath : Str -> Result {before : Str, after: Str}  Str
+stripPath : Str -> {before : Str, after: Str}
 stripPath = \path ->
     when Str.splitLast path "/" is 
-        Ok splited -> 
-            Ok {splited & before : Str.concat splited.before "/" }
-        Err _ -> Ok {before : "./", after:path }
+        Ok splited -> {splited & before : Str.concat splited.before "/" }
+        Err _ -> {before : "./", after:path }
 
 guessEffect : List Str, Str -> GuessEffectType
 guessEffect = \ lst, pattern  ->

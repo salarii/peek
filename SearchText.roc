@@ -16,6 +16,7 @@ LineAnalyzedType : { content : List  Str, separator : List  Str }
 
 LineProcessedType : { number : U32 , line : LineAnalyzedType, status : LineSearchType, color : Set PatternType }
 
+
 evalSearch : List Str, ConfigType -> Str
 evalSearch = \ content, config ->
     if List.isEmpty content == Bool.true then
@@ -25,7 +26,22 @@ evalSearch = \ content, config ->
         lineNembersAdded = List.walk content ([],1) (\state,  line -> 
             # I have done by accident and this crashed compiler
             #  (List.append state.1  {number : state.1, line : line }, state.2 + 1 )
-            (List.append state.0  {number : state.1, line : line }, state.1 + 1 )
+                if List.isEmpty config.limit == Bool.true then
+                    (List.append state.0  {number : state.1, line : line }, state.1 + 1 )
+                else
+                    inSection =
+                        List.walkUntil config.limit Bool.false (\ isIn, limit->
+                            FromLineToLine left right = limit
+                            if (Num.toU32 left) <= state.1 &&
+                            (Num.toU32 right) >= state.1 then
+                                Break Bool.true
+                            else
+                                Continue isIn
+                        )
+                    if inSection == Bool.true then
+                        (List.append state.0  {number : state.1, line : line }, state.1 + 1 )        
+                    else
+                        (state.0, state.1 + 1 )
             )
         
         when config.command is 
@@ -46,13 +62,16 @@ evalSearch = \ content, config ->
                                     lineNumber = 
                                         Num.toStr  item.number 
                                         |> Utils.fillSpacesUpTo (numIdxLen + 1)
+                                    
                                     out
                                     |> Str.concat lineNumber
                                     |> Str.concat (produceOutput item.line)
+                                    |> Str.trimEnd
                                     |> Str.concat "\n\r"
                                 else
                                     out
                                     |> Str.concat (produceOutput item.line)
+                                    |> Str.trimEnd
                                     |> Str.concat "\n\r"
                             )
 

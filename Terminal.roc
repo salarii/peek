@@ -77,16 +77,14 @@ guessPath = \ appState ->
         dirs =
             Set.map ( Result.withDefault dirPresence (Set.empty {}) ) ( \ pathDir ->
                 System.stripPath pathDir
-                    |> Result.withDefault {before : "", after : pathDir }
-                    |> (\ pathSplitted -> pathSplitted.after )
+                |> (\ pathSplitted -> pathSplitted.after )
             )
        
         group = 
             List.map lst (\ path ->
                 System.stripPath path
-                |> Result.withDefault {before : "", after : path }
                 |> (\ pathSplitted -> pathSplitted.after ))
-            |> System.grouping 3 100
+            |> System.grouping 3 140
             |> System.printGroupWithSet  dirs
 
         {} <- Stdout.write "\n" |> Task.await
