@@ -29,7 +29,7 @@ interface State
 
 PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
 
-ModifiersType  : [ NumberLines]
+ModifiersType  : [ NumberLines, LogicAND]
 
 CommandType : [
     None,

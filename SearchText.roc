@@ -8,17 +8,67 @@ interface  SearchText
 # some operations will be slow : ) so it will be up to user to decide which one
 # to use in given circumstances
 
-LineSearchType : [ Hit, Miss ]
+LineSearchResultType : [ Hit PatternType, Miss ]
 
 LineInput : {number : U32, line : Str }
 
 LineAnalyzedType : { content : List  Str, separator : List  Str }
 
-LineProcessedType : { number : U32 , line : LineAnalyzedType, status : LineSearchType, color : Set PatternType }
+LineProcessedType : { number : U32 , line : LineAnalyzedType, status : LineSearchResultType, color : Set PatternType }
+
+mergeLineProcessed : List LineProcessedType, List LineProcessedType, Set PatternType -> List LineProcessedType
+mergeLineProcessed = \ leftLst, rightLst, keep ->
+    merged =
+        List.concat leftLst rightLst
+        |> List.sortWith ( \ left, right ->
+            if left.number > right.number then
+                GT
+            else if left.number == right.number then
+                EQ
+            else  
+                LT)
+        #  bit ugly but needed at least for now 
+        |> List.walk ( 0,[]) (\ state, line -> 
+            if line.number != state.0 then 
+                (line.number, List.append state.1 line)
+            else 
+                when List.last state.1 is 
+                    Ok last ->
+                        when line.status is 
+                            Hit pattern ->
+                                if Set.contains keep pattern == Bool.true then
+                                    (state.0, Utils.modifyLastInList state.1 { last & status : line.status })
+                                else 
+                                    state
+                            Miss -> 
+                                state 
+
+                    _ -> state
+            )
+    merged.1
 
 
 evalSearch : List Str, ConfigType -> Str
 evalSearch = \ content, config ->
+
+    numIdxLen = Utils.strUtfLen( Num.toStr (List.len content) )
+    printLine :  LineProcessedType, (Bool, Nat) -> Str 
+    printLine = \ processed, printLineNumber -> 
+        if printLineNumber.0 == Bool.true then 
+            lineNumber = 
+                Num.toStr  processed.number 
+                |> Utils.fillSpacesUpTo printLineNumber.1         
+            ""
+            |> Str.concat lineNumber
+            |> Str.concat (produceOutput processed.line)
+            |> Str.trimEnd
+            |> Str.concat "\n\r"
+        else
+            ""
+            |> Str.concat (produceOutput processed.line)
+            |> Str.trimEnd
+            |> Str.concat "\n\r"
+
     if List.isEmpty content == Bool.true then
         ""
     else 
@@ -55,29 +105,84 @@ evalSearch = \ content, config ->
                 |> ( \searchResult ->
                     when searchResult is
                         Ok searched ->
-                            numIdxLen = Utils.strUtfLen( Num.toStr (List.len content) )
-                            List.walk searched "" (\ out, item -> 
-                            
-                                if Set.contains  config.modifiers NumberLines == Bool.true then 
-                                    lineNumber = 
-                                        Num.toStr  item.number 
-                                        |> Utils.fillSpacesUpTo (numIdxLen + 1)
-                                    
-                                    out
-                                    |> Str.concat lineNumber
-                                    |> Str.concat (produceOutput item.line)
-                                    |> Str.trimEnd
-                                    |> Str.concat "\n\r"
-                                else
-                                    out
-                                    |> Str.concat (produceOutput item.line)
-                                    |> Str.trimEnd
-                                    |> Str.concat "\n\r"
+                            List.walk searched "" (\ out, item ->
+                                out 
+                                |>Str.concat (printLine item (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
                             )
 
                         Err message -> message 
                         )
+            FromPatternToPattern fromPat toPat ->
+                patternsProcessed =
+                    List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
+                        when result is 
+                            Ok resultRegister -> 
+                                Continue (analyseLine line config.patterns resultRegister)
+                            Err message -> Break (Err message)
+                    )
+                rangesProcessed =
+                    List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
+                        when result is 
+                            Ok resultRegister -> 
+                                Continue (analyseLine line [fromPat, toPat] resultRegister)
+                            Err message -> Break (Err message)
+                    )
+                when (patternsProcessed, rangesProcessed )  is 
+                    (Ok patterns, Ok ranges ) ->
+                        mergeLineProcessed patterns ranges (Set.fromList [fromPat, toPat])
+                        |> List.walk (Block,[],[]) (\state, line ->
+                            when line.status is 
+                                Hit pattern -> 
+                                    if pattern == fromPat then
+                                        if state.0 == Allow then
+                                            when List.first state.1 is 
+                                                Ok head -> 
+                                                    (Allow,[line],List.append state.2 [head])
+                                                Err _ -> state
+                                        else 
+                                            (Allow,[line],state.2)
+                                    else if pattern == toPat  then
+                                        if state.0 == Allow then
+                                            (Block,[],List.append state.2 (List.append state.1 line))
+                                        else 
+                                            (Block,[],List.append state.2 [line])
+                                    else
+                                        if state.0 == Allow then
+                                            (Allow,List.append state.1 line, state.2 )
+                                        else 
+                                            state
+                                Miss -> 
+                                    if state.0 == Allow then
+                                        (Allow,List.append state.1 line, state.2 )
+                                    else 
+                                        state
+                        )
+                        |> ( \ regions -> 
+                            List.walk regions.2 "" (\ totalOut, region -> 
+                                regionOut =
+                                    List.walk region "" (\ out, line ->
+                                        out
+                                        |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
+                                        )
+                                Str.concat totalOut regionOut
+                                |> Str.concat "\n\r----------------------------------------------------\n\r"
+                            ))
+                                
+                    (Err message , _ ) ->  message
+                    (Ok _, Err message ) -> message
             _ -> "not supported yet"
+
+convertToColor : PatternType -> PatternType 
+convertToColor = \ pattern -> 
+    when pattern is 
+        Regex type ->
+            when type is
+                Allow pat ->
+                    Regex (Color pat )
+                _ -> pattern 
+        Allow pat ->
+            Color pat
+        _-> pattern
 
 analyseLine : LineInput, List PatternType, List LineProcessedType -> Result (List LineProcessedType) Str   
 analyseLine = \ lineData, patterns, register ->
@@ -87,7 +192,7 @@ analyseLine = \ lineData, patterns, register ->
                 Regex type ->
                     when type is
                         Allow pat ->
-                            { state &  allow : Set.insert state.allow pattern, color : Set.insert state.color (Regex (Color pat ) )  }
+                            { state &  allow : Set.insert state.allow pattern, color : Set.insert state.color (convertToColor pattern ) }
                         Blacklist pat -> 
                             { state &  block : Set.insert state.block pattern }
                         Color pat -> 
@@ -96,7 +201,7 @@ analyseLine = \ lineData, patterns, register ->
                 Allow pat ->
                     #  I made mistake as below and this caused compiler to hang during build : )
                     # { state &  allow : Set.insert state.allow pattern, color : Set.insert state.color (Color pattern) }  
-                    { state &  allow : Set.insert state.allow pattern, color : Set.insert state.color (Color pat) }
+                    { state &  allow : Set.insert state.allow pattern, color : Set.insert state.color (convertToColor pattern ) }
                 Blacklist pat -> 
                     { state &  block : Set.insert state.block pattern }
                 Color pat -> 
@@ -109,29 +214,36 @@ analyseLine = \ lineData, patterns, register ->
             Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
                 when stateResult is 
                     Ok state ->
-                        when pattern is 
-                            Regex inside ->
-                                when inside is 
-                                    Allow pat -> 
-                                        when regexWordMatch lineData.line pat { content : [], separator : [] } is 
-                                            Ok searched -> 
-                                                if List.isEmpty searched.separator == Bool.false then
-                                                    if List.len searched.separator + 1 == List.len searched.content then
-                                                        Break ( Ok { state & line : searched , status : Hit, color : Set.remove state.color (Color pat)})
-                                                    else
-                                                        Break (Err "problem during search \(pat)")  
-                                                else
-                                                    Continue ( Ok { state &  color :  Set.remove state.color (Color pat) } )
-                                            Err _ -> Break (Err "problem during search \(pat)")
-                                    _-> Break (Err ("unknown problem during search"))
-                    
-                            Allow pat -> 
-                                searched = plainWordMatch lineData.line pat 
-                                if List.isEmpty searched.separator == Bool.true then
-                                    Continue ( Ok { state &  color :  Set.remove state.color (Color pat) } )
+                        when searchPattern lineData.line pattern is 
+                            Ok searchResult -> 
+                                if searchResult.status != Miss then
+                                    Break ( Ok { state & line : searchResult.line, status : searchResult.status, color : Set.remove state.color (convertToColor pattern)})
                                 else
-                                    Break ( Ok { state & line : searched, status : Hit, color : Set.remove state.color (Color pat)})
-                            _ -> Break (Err ("unknown problem during search"))
+                                    Continue ( Ok { state &  color :  Set.remove state.color (convertToColor pattern)})
+                            Err message -> Break (Err message)
+                        # when pattern is 
+                        #     Regex inside ->
+                        #         when inside is 
+                        #             Allow pat -> 
+                        #                 when regexWordMatch lineData.line pat { content : [], separator : [] } is 
+                        #                     Ok searched -> 
+                        #                         if List.isEmpty searched.separator == Bool.false then
+                        #                             if List.len searched.separator + 1 == List.len searched.content then
+                        #                                 Break ( Ok { state & line : searched , status : Hit, color : Set.remove state.color (Color pat)})
+                        #                             else
+                        #                                 Break (Err "problem during search \(pat)")  
+                        #                         else
+                        #                             Continue ( Ok { state &  color :  Set.remove state.color (Color pat) } )
+                        #                     Err _ -> Break (Err "problem during search \(pat)")
+                        #             _-> Break (Err ("unknown problem during search"))
+                    
+                        #     Allow pat -> 
+                        #         searched = plainWordMatch lineData.line pat 
+                        #         if List.isEmpty searched.separator == Bool.true then
+                        #             Continue ( Ok { state &  color :  Set.remove state.color (Color pat) } )
+                        #         else
+                        #             Break ( Ok { state & line : searched, status : Hit, color : Set.remove state.color (Color pat)})
+                        #     _ -> Break (Err ("unknown problem during search"))
                     Err message -> Break (Err message)
                 )
         else
@@ -180,6 +292,31 @@ analyseLine = \ lineData, patterns, register ->
                 else
                     Ok (List.append  register allowStage)
         Err message -> Err message 
+
+searchPattern : Str, PatternType -> Result { line : LineAnalyzedType, status : LineSearchResultType }  Str
+searchPattern = \ line, pattern ->
+    when pattern is 
+        Regex inside ->
+            when inside is 
+                Allow pat | Color pat | Blacklist pat -> 
+                    when regexWordMatch line pat { content : [], separator : [] } is 
+                        Ok searched -> 
+                            if List.isEmpty searched.separator == Bool.false then
+                                if List.len searched.separator + 1 == List.len searched.content then
+                                    Ok  { line : searched, status : Hit pattern}
+                                else
+                                    Err "problem during search \(pat)"
+                            else
+                               Ok  { line : searched, status : Miss }
+                        _-> Err ("unknown problem during search")
+                    
+        Allow pat | Color pat | Blacklist pat -> 
+            searched = plainWordMatch line pat 
+            if List.isEmpty searched.separator == Bool.false then
+                Ok { line : searched, status : Hit pattern}
+            else
+                Ok { line : searched, status : Miss }
+        _ -> Err ("unknown problem during search")
 
 
 mergeColors : List LineAnalyzedType-> LineAnalyzedType
