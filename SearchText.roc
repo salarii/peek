@@ -2,7 +2,7 @@ interface  SearchText
     exposes [evalSearch]
     imports [
         Regex,
-        State.{PatternType,ConfigType},
+        State.{PatternType,ConfigType,SectionType},
         Utils]
 
 # some operations will be slow : ) so it will be up to user to decide which one
@@ -37,7 +37,10 @@ mergeLineProcessed = \ leftLst, rightLst, keep ->
                         when line.status is 
                             Hit pattern ->
                                 if Set.contains keep pattern == Bool.true then
-                                    (state.0, Utils.modifyLastInList state.1 { last & status : line.status })
+                                    when last.status is
+                                        Hit lastPat ->
+                                            (state.0, Utils.modifyLastInList state.1 { last & status : line.status, color: Set.insert last.color (convertToColor lastPat) })
+                                        Miss ->  (state.0, Utils.modifyLastInList state.1 { last & status : line.status })
                                 else 
                                     state
                             Miss -> 
@@ -170,6 +173,37 @@ evalSearch = \ content, config ->
                                 
                     (Err message , _ ) ->  message
                     (Ok _, Err message ) -> message
+            SearchSection section ->        
+                patternsProcessed =
+                    List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
+                        when result is 
+                            Ok resultRegister -> 
+                                Continue (analyseLine line config.patterns resultRegister)
+                            Err message -> Break (Err message)
+                    )
+                hotProcessed =
+                    List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
+                        when result is 
+                            Ok resultRegister -> 
+                                Continue (analyseLine line [section.pattern] resultRegister)
+                            Err message -> Break (Err message)
+                    )
+                when (patternsProcessed, hotProcessed )  is 
+                    (Ok patterns, Ok hot ) ->
+                        mergeLineProcessed patterns hot (Set.fromList [section.pattern])
+                        |> filterRegion [section]
+                        |> List.walk "" (\ totalOut, sec -> 
+                                sectionOut =
+                                    List.walk sec "" (\ out, line ->
+                                        out
+                                        |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
+                                        )
+                                Str.concat totalOut sectionOut
+                                |> Str.concat "\n\r----------------------------------------------------\n\r"
+                            )
+                    (Err message , _ ) ->  message
+                    (Ok _, Err message ) -> message
+                    
             _ -> "not supported yet"
 
 convertToColor : PatternType -> PatternType 
@@ -221,29 +255,6 @@ analyseLine = \ lineData, patterns, register ->
                                 else
                                     Continue ( Ok { state &  color :  Set.remove state.color (convertToColor pattern)})
                             Err message -> Break (Err message)
-                        # when pattern is 
-                        #     Regex inside ->
-                        #         when inside is 
-                        #             Allow pat -> 
-                        #                 when regexWordMatch lineData.line pat { content : [], separator : [] } is 
-                        #                     Ok searched -> 
-                        #                         if List.isEmpty searched.separator == Bool.false then
-                        #                             if List.len searched.separator + 1 == List.len searched.content then
-                        #                                 Break ( Ok { state & line : searched , status : Hit, color : Set.remove state.color (Color pat)})
-                        #                             else
-                        #                                 Break (Err "problem during search \(pat)")  
-                        #                         else
-                        #                             Continue ( Ok { state &  color :  Set.remove state.color (Color pat) } )
-                        #                     Err _ -> Break (Err "problem during search \(pat)")
-                        #             _-> Break (Err ("unknown problem during search"))
-                    
-                        #     Allow pat -> 
-                        #         searched = plainWordMatch lineData.line pat 
-                        #         if List.isEmpty searched.separator == Bool.true then
-                        #             Continue ( Ok { state &  color :  Set.remove state.color (Color pat) } )
-                        #         else
-                        #             Break ( Ok { state & line : searched, status : Hit, color : Set.remove state.color (Color pat)})
-                        #     _ -> Break (Err ("unknown problem during search"))
                     Err message -> Break (Err message)
                 )
         else
@@ -256,39 +267,26 @@ analyseLine = \ lineData, patterns, register ->
                 Ok register
             else
                 if Set.isEmpty sortPatterns.block == Bool.false then
-                    searchResult =
-                        Set.walkUntil sortPatterns.block (Ok  { content : [], separator : [] }) (\ state, pattern ->
-                            when  state is
-                                Ok _ -> 
-                                    when pattern is 
-                                        Regex type ->
-                                            when type is
-                                                Blacklist pat -> 
-                                                    searchedResult = regexWordMatch lineData.line pat { content : [], separator : [] }
-                                                    when searchedResult is 
-                                                        Ok searched -> 
-                                                            if List.isEmpty searched.separator == Bool.true then        
-                                                                Continue state
-                                                            else 
-                                                                Break (Ok searched)
-                                                        Err message ->  Break (Err message)
-                                                _ -> Break (Err ("unknown problem during search"))
-                                        Blacklist pat -> 
-                                            searched = plainWordMatch lineData.line pat
-                                            if List.isEmpty searched.separator == Bool.true then        
-                                                Continue state
-                                            else 
-                                                Break (Ok searched)
-                                        _ ->  Break (Err ("unknown problem during search"))
-                                Err message ->  Break (Err message)
+                    Set.walkUntil sortPatterns.block (Ok Miss) (\ stateResult, pattern ->
+                            when  stateResult is
+                                Ok state ->
+                                    when searchPattern lineData.line pattern is 
+                                        Ok searchResult -> 
+                                            if searchResult.status != Miss then
+                                                Break (Ok searchResult.status)
+                                            else
+                                                Continue stateResult
+                                        Err message -> Break (Err message)
+                                Err message -> Break (Err message)
                         )
-                    when searchResult is 
-                        Ok searched  ->
-                            if List.isEmpty searched.separator == Bool.true then
-                                Ok (List.append register allowStage)
-                            else 
-                                Ok register
-                        Err message -> Err message
+                    |> (\ searchResult ->
+                        when searchResult is 
+                            Ok searched  ->
+                                if searched == Miss then
+                                    Ok (List.append register allowStage)
+                                else 
+                                    Ok register
+                            Err message -> Err message)
                 else
                     Ok (List.append  register allowStage)
         Err message -> Err message 
@@ -435,172 +433,115 @@ regexWordMatch = \ word, pattern, register ->
                     Ok ( {content : List.append register.content word, separator : register.separator })
             Err message -> Err message 
 
-# wordMatches = \ word, patterns ->
-#     List.walk patterns Bool.false ( \flag, pat -> 
-#         if flag == Bool.true then
-#             Bool.true
-#         else
-#             when (Str.splitFirst  word  pat ) is
-#             Ok _ -> Bool.true
-#             Err  _ ->  Bool.false)
+# in this function I want to experiment with tuples as state in walk (will I be able to maintain this in long run ??)
+filterRegion : List LineProcessedType, List SectionType -> List (List LineProcessedType)
+filterRegion = \ lines, sections  -> 
+    if List.len  sections == 0 then
+        []
+    else
+        longest = List.walk sections 0  
+            ( \ len , pat  -> 
+                if pat.before > len then
+                    pat.before
+                else
+                    len )
 
-
-# filterInternal = \ str, matches, inFlag  ->
-#     if List.isEmpty matches == Bool.true  then
-#         str
-#     else
-#         Str.split str "\n"
-#         |> List.walk "" ( \ state , elem ->  
-#             checkResult = wordMatches elem  matches
-#             if  (checkResult == inFlag) && (Str.isEmpty (Str.trim elem ) == Bool.false) then 
-#                 Str.concat  state elem
-#                 |>  Str.concat  "\n"
-#             else 
-#                 state
-#             )
-
-
-# wordMatchesRegion = \ word, patterns ->
-#     List.walk patterns { matchResult : Bool.false, pattern :{ pat : "", lines : 0 }  } ( \state, pattern -> 
-#         when (Str.splitFirst  word  pattern.pat ) is
-#                 Ok _ ->
-#                     if (state.matchResult == Bool.true) && (state.pattern.lines >= pattern.lines ) then
-#                         state
-#                     else                        
-#                         { state &  matchResult : Bool.true, pattern : pattern }
-#                 Err  _ ->  state  )
-
-# filterRegion = \ inLog, regions  -> 
-#     if List.len  regions == 0 then
-#         inLog
-#     else 
-#         longest = List.walk regions 0  
-#             ( \ state , pat  -> 
-#                 if pat.lines > state then
-#                     pat.lines
-#                 else
-#                     state )
-       
-#         refreashedRegions = regions
-        
-#         getSizeLast = ( \ listOfLst  ->
-#             when List.last listOfLst is 
-#                 Ok lst -> List.len lst
-#                 Err _ -> 0 )
+        getSizeLast : List (List a) -> Nat
+        getSizeLast = ( \ listOfLst  ->
+            when List.last listOfLst is 
+                Ok lst -> List.len lst
+                Err _ -> 0 )
     
-#         nextLineParse = (\  state, line ->
-#             parsingResult = wordMatchesRegion line  refreashedRegions
-
-#             if parsingResult.matchResult == Bool.true  then  
-
-#                 state
-#                 |> ( \ stateIn ->
-
-#                     if parsingResult.pattern.lines > (getSizeLast stateIn.bufferMatched) then
-#                         { stateIn &
-#                             bufferMatched : 
-#                                 List.dropLast  stateIn.bufferMatched 1
-#                                 |> List.append  ( List.sublist stateIn.buffer { start: (longest - parsingResult.pattern.lines), len: parsingResult.pattern.lines } ) }
-#                     else
-#                         { stateIn &bufferMatched : 
-#                             (
-#                                 when  List.last stateIn.bufferMatched is
-#                                     Ok lst -> 
-#                                         (List.replace stateIn.bufferMatched (List.len stateIn.bufferMatched - 1)  (List.append lst line)).list
-#                                     Err _ ->  List.append stateIn.bufferMatched [line] ) })
-#                 |> ( \ modState ->     
-#                         if parsingResult.pattern.lines > modState.cnt  then
-#                             {modState & cnt : parsingResult.pattern.lines }
-#                         else
-#                             {modState & cnt : modState.cnt - 1  })
-#             else 
-#                 if state.cnt > 0 then
-#                     {state &
-#                         cnt : state.cnt - 1,
-#                         bufferMatched : 
-#                             (
-#                                 when  List.last state.bufferMatched is
-#                                     Ok lst -> 
-#                                         (List.replace state.bufferMatched (List.len state.bufferMatched - 1)  (List.append lst line)).list
-#                                     Err _ ->  List.append state.bufferMatched [line] ) }
-#                 else
-#                     when  List.last state.bufferMatched is
-#                         Ok lst -> 
-#                             if List.len lst > 0 then
-#                             {state &
-#                                 bufferMatched :  List.append state.bufferMatched  [] }
-#                             else
-#                                 state
-#                         Err _ -> state )
-                    
-#         analysysDone = 
-#             Str.split inLog "\n"
-#             |> List.walk { cnt : 0, buffer : [], bufferMatched : []}
-#                 (\ state , line ->
-                    
-#                     state 
-#                     |> ( \ inState ->
-#                         if List.len inState.buffer < longest then
-#                             { inState & buffer :  List.append inState.buffer line}
-#                         else
-#                             { inState & buffer : ( 
-#                                 List.dropFirst inState.buffer 1
-#                                 |> List.append  line  )} )
-#                     |> nextLineParse line 
-#                 )
-#         List.walk analysysDone.bufferMatched ""  
-#             ( \ state, lst ->  
-#                 if List.isEmpty lst  == Bool.true then
-#                     state
-#                 else              
-#                     List.walk lst state ( \inState , line ->
-#                         Str.concat  inState  "\n"
-#                         |> Str.concat line ) 
-#                     |>Str.concat  "\n----------------------------\n")       
+        evalIfHit : LineProcessedType -> (Bool, Nat, Nat)
+        evalIfHit = \ line -> 
+            List.walkUntil sections  (Bool.false, 0, 0) (\ state, section->
+                when  line.status is 
+                    Hit  pattern -> 
+                        if section.pattern == pattern then 
+                            Break (Bool.true , section.before, section.after ) 
+                        else 
+                            Continue state
+                    Miss -> Continue state 
+                )
     
-# filterOut =  \ log, matches  ->
-#     workedOut = List.walk matches (Ok { whiteList : [],  blackList : [], regionsList : [] }) 
-#         ( \ state , word  -> 
-#             when state is 
-#                 Ok stateInt ->
-#                     when regionKey word is
-#                         Ok res  ->
-#                             when  res  is
-#                                 Region val ->
-#                                         Ok { stateInt & regionsList: List.append stateInt.regionsList val  }
-#                                 Simple str ->
-#                                     if Str.startsWith word "@" == Bool.true then
-#                                         Ok { stateInt & blackList:   List.append stateInt.blackList  (Str.replaceFirst  str "@"  "" ) }
-#                                     else
-#                                         Ok { stateInt & whiteList: List.append stateInt.whiteList str   }
-#                         Err _ -> Err word   
-#                 Err _ -> Err word       
-#             )
-    
-#     when workedOut is
-#         Ok tokens ->
-#             Ok (filterInternal log  tokens.whiteList  Bool.true
-#             |>  filterInternal tokens.blackList  Bool.false
-#             |> filterRegion tokens.regionsList )
-#         Err wrongToken -> Err  wrongToken 
+        nextLineParse : (Nat, List LineProcessedType,List (List LineProcessedType)), LineProcessedType -> (Nat, List LineProcessedType,List (List LineProcessedType))
+        nextLineParse = (\  state, line ->
+            parsingResult = evalIfHit line 
+            if parsingResult.0 == Bool.true  then  
 
-# extractPat = \ lst ->
-#     when  List.first lst  is 
-#         Ok firstStr ->
-#             when  List.last  lst  is
-#                 Ok secStr -> 
-#                     when Str.toNat  secStr  is 
+                state
+                |> ( \ stateIn ->
+
+                    if parsingResult.1 > (getSizeLast stateIn.2) then
+                        (
+                            stateIn.0,
+                            stateIn.1,
+                            List.dropLast  stateIn.2 1
+                            |> List.append  ( List.sublist stateIn.1 { start: (longest - parsingResult.1 + 1), len: parsingResult.1 + 1 } )
+                        )
+                    else
+                        lastExtended = 
+                            when  List.last stateIn.2 is
+                                    Ok lst -> 
+                                        Utils.modifyLastInList stateIn.2  (List.append lst line)
+                                    Err _ ->  List.append stateIn.2 [line] 
+                        (
+                            stateIn.0,
+                            stateIn.1,
+                            lastExtended
+                        )
+                )
+                |> ( \ modState ->     
+                        if parsingResult.2 > modState.0  then
+                            (parsingResult.2, modState.1, modState.2)
+                        else
+                            (modState.0 - 1, modState.1, modState.2))
+            else 
+                updatedBuffer =
+                    when  List.last state.2 is
+                                Ok lst -> 
+                                    Utils.modifyLastInList state.2  (List.append lst line)
+                                Err _ ->  List.append state.2 [line]
+                if state.0 > 0 then
+                    (
+                        state.0 - 1,
+                        state.1,
+                        updatedBuffer
+                    )
+                else
+                    when  List.last state.2 is
+                        Ok lst -> 
+                            if List.len lst > 0 then
+                                (
+                                    state.0,
+                                    state.1,
+                                    List.append state.2  []
+                                )
+                            else
+                                state
+                        Err _ -> state )
                     
-#                         Ok num -> Ok (Region { pat : firstStr, lines : num })
-#                         Err _ -> Err PatternError    
-#                 Err _ -> Err PatternError   
-          
-#         Err _ -> Err PatternError
-
-
-# regionKey = \ str ->
-#     items = Str.split  str "^"
-#     when List.len items is
-#         1 -> Ok  ( Simple  str )
-#         2 -> extractPat items
-#         _ -> Err  PatternError
+        analysysDone = 
+            List.walk lines (0, [], [])#(Nat, List LineProcessedType, List List LineProcessedType)
+                (\ state , line ->
+                    state 
+                    |> ( \ inState ->
+                        if List.len inState.1 <= longest then
+                            (
+                                state.0,
+                                List.append inState.1 line,
+                                state.2
+                            )
+                        else
+                            (
+                                state.0,
+                                (
+                                    List.dropFirst inState.1 1
+                                    |> List.append  line
+                                ),
+                                state.2
+                            ))
+                    |> nextLineParse line 
+                )
+        analysysDone.2
+  

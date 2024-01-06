@@ -16,6 +16,7 @@ interface State
         getCommandHistory,
         setTerminalHistory,
         updatePrompt,
+        createConfig,
         StateType,
         TerminalLineStateType,
         PatternType,
@@ -23,7 +24,7 @@ interface State
         CommandType,
         ConfigType,
         AppModeType,
-        createConfig,
+        SectionType,
         ]
     imports []
 
@@ -31,10 +32,12 @@ PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist
 
 ModifiersType  : [ NumberLines, LogicAND]
 
+SectionType : {before: Nat, after:  Nat, pattern : PatternType}
+
 CommandType : [
     None,
     Search,
-    SearchSection U32 U32 PatternType,
+    SearchSection SectionType,
     FromPatternToPattern PatternType PatternType,
 ]
 

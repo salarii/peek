@@ -38,8 +38,8 @@ regex = \  parsResult, config ->
             Ok { config & patterns : [Regex (Color pat) ] }
         (Search, [Blacklist pat]) -> 
             Ok { config & patterns : [Regex (Blacklist pat) ] }
-        (SearchSection head tail (Allow pat), []) ->
-            Ok { config & command: SearchSection head tail (Regex (Allow pat) )}
+        (SearchSection {before: head, after : tail, pattern : (Allow pat)}, []) ->
+            Ok { config & command: SearchSection {before:  head , after:  tail, pattern : (Regex (Allow pat) ) }}
         _ -> Ok config
 
 createSection : ParsingResultType, ConfigType -> Result ConfigType Str
@@ -60,9 +60,10 @@ createSection = \  parsResult, config ->
                                                 config &
                                                 command:
                                                     SearchSection
-                                                        (Utils.asciiArrayToNumber arg1 Str.toU32)
-                                                        (Utils.asciiArrayToNumber arg1 Str.toU32)  
-                                                        pattern,
+                                                        {
+                                                        before: (Utils.asciiArrayToNumber arg1 Str.toNat),
+                                                        after: (Utils.asciiArrayToNumber arg1 Str.toNat),  
+                                                        pattern: pattern},
                                                 modifiers : Set.empty {},
                                                 patterns : [], 
                                                 }
@@ -71,9 +72,10 @@ createSection = \  parsResult, config ->
                                                 config &
                                                 command:
                                                     SearchSection
-                                                        (Utils.asciiArrayToNumber arg1 Str.toU32)
-                                                        0  
-                                                        pattern,
+                                                        {
+                                                        before: (Utils.asciiArrayToNumber arg1 Str.toNat),
+                                                        after: 0,
+                                                        pattern : pattern},
                                                 modifiers : Set.empty {},
                                                 patterns : [], 
                                                 }
@@ -82,9 +84,10 @@ createSection = \  parsResult, config ->
                                                 config &
                                                 command:
                                                     SearchSection
-                                                        0
-                                                        (Utils.asciiArrayToNumber arg1 Str.toU32) 
-                                                        pattern,
+                                                        {
+                                                        before : 0,
+                                                        after: (Utils.asciiArrayToNumber arg1 Str.toNat),
+                                                        pattern : pattern},
                                                 modifiers : Set.empty {},
                                                 patterns : [], 
                                                 }
@@ -415,7 +418,7 @@ expect
         Ok config ->
             config.patterns == []  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == SearchSection 10 10 (Regex (Allow "black[1-9]"))
+            config.command == SearchSection {before : 10,  after : 10, pattern : (Regex (Allow "black[1-9]")) }
         Err mes -> mes == "test region "
 
 expect
@@ -423,7 +426,7 @@ expect
         Ok config ->
             config.patterns == []  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == SearchSection 10 0 (Allow "black")
+            config.command == SearchSection {before : 10, after : 0, pattern:  (Allow "black")}
         Err mes -> mes == "test region before "
 
 # maybe create more test in the future, at least to cover detected bugs 
