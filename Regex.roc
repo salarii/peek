@@ -1,5 +1,5 @@
 interface Regex
-    exposes [parseStr, getValue, ParsingResultType, TokenType ]
+    exposes [parseStr, getValue, ParsingResultType, TokenType, regexMagic, MagicType, parseStrMagic]
     imports [Utils]
 
 
@@ -1143,6 +1143,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
 
 createRegexFromData : List  RecoverPatternType, Result ( List  TokenPerRegexType ) Str, Result ( List  TokenPerRegexType ) Str -> Result  ( List  TokenPerRegexType ) Str
 createRegexFromData = \ inRegexData, regexBase, onlyExceptBase -> 
+
     when (regexBase, onlyExceptBase) is 
         (Ok base, Ok onlyExcept) ->
             List.walkUntil  inRegexData (Ok []) ( \ state, pat  ->
@@ -1158,18 +1159,18 @@ createRegexFromData = \ inRegexData, regexBase, onlyExceptBase ->
                     
         _ -> Err "error in regex patterns creation"
 
- 
-parseStr : Str, Str -> Result ParsingResultType  Str
-parseStr = \ str, pattern -> 
-    when (thirdStageChains, onlyExceptInternalChains) is
-    #when availableRegex is 
-    #    Ok stage1Pat ->
+
+# walkaround for static initialized every time
+MagicType : ( Result (List TokenPerRegexType ) Str,  Result (List TokenPerRegexType ) Str )
+regexMagic : MagicType 
+regexMagic = (thirdStageChains, onlyExceptInternalChains)
+
+parseStrMagic : Str, Str, MagicType -> Result ParsingResultType  Str
+parseStrMagic = \ str, pattern, magic -> 
+    when magic is
         (Ok mainRegex, Ok onlyExceptRegex) ->
 
             tokensFromUserInputResult = regexCreationStage pattern mainRegex onlyExceptRegex []
-
-
-            #tokensFromUserInputResult = regexCreationStage pattern stage1Pat stage1Pat []
 
             when tokensFromUserInputResult is 
                 Ok tokensFromUserInput ->
@@ -1188,8 +1189,33 @@ parseStr = \ str, pattern ->
                     Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
 
         _ -> Err   "This is internal regex error not your fault\n" 
-        #Err message -> 
-        #    Err  (Str.concat "This is internal regex error not your fault\n"  message )
+
+
+ 
+parseStr : Str, Str -> Result ParsingResultType  Str
+parseStr = \ str, pattern -> 
+    when (thirdStageChains, onlyExceptInternalChains) is
+        (Ok mainRegex, Ok onlyExceptRegex) ->
+
+            tokensFromUserInputResult = regexCreationStage pattern mainRegex onlyExceptRegex []
+
+            when tokensFromUserInputResult is 
+                Ok tokensFromUserInput ->
+                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
+                    # for now get longest maybe??
+                    Ok (List.walk independentChainlst (createParsingRecord [] Inactive No)  ( \ state, regexParser ->  
+                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
+                        if state.matchFound == Bool.true then
+                            if List.len parsResult.matched > List.len state.matched  then 
+                                parsResult
+                            else 
+                                state
+                        else 
+                            parsResult ))
+                Err message -> 
+                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
+
+        _ -> Err   "This is internal regex error not your fault\n" 
 
 
 #parseStrCached : Str, Str, Dict Str (List TokenType)-> Result {parsed : ParsingResultType,cache: Dict Str (List TokenType) }  Str

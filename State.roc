@@ -26,11 +26,11 @@ interface State
         AppModeType,
         SectionType,
         ]
-    imports []
+    imports [Regex.{regexMagic,MagicType}]
 
 PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
 
-ModifiersType  : [ NumberLines, LogicAND]
+ModifiersType : [ NumberLines, LogicAND]
 
 SectionType : {before: Nat, after:  Nat, pattern : PatternType}
 
@@ -39,12 +39,17 @@ CommandType : [
     Search,
     SearchSection SectionType,
     FromPatternToPattern PatternType PatternType,
-]
+    ]
 
 HistoryType : List (List U8)
 
-ConfigType :
-    { limit : List [FromLineToLine  I32 I32],  command: CommandType, modifiers : Set ModifiersType, patterns : List PatternType }
+ConfigType : {
+    limit : List [FromLineToLine  I32 I32],
+    command: CommandType, 
+    modifiers : Set ModifiersType, 
+    patterns : List PatternType,
+    regexMagic : MagicType, # remember to remove this one day : )
+    }
 
 SearchSetupType : [ None, Configured ConfigType ]
 
@@ -56,12 +61,12 @@ TerminalLineStateType : {
     content : List U8,
     cursor : { row : I32, col : I32 },
     prompt : List U8,
-}
+    }
 
 SystemDataType : {
     homePath : Str, 
     current : Str,
-}
+    }
 
 StateType := {
     #history : List Str,
@@ -71,14 +76,14 @@ StateType := {
     system : SystemDataType,  
     config : SearchSetupType,
     mode : AppModeType,
-    commandsHistory : { sys : HistoryType,  search : HistoryType}
+    commandsHistory : { sys : HistoryType,  search : HistoryType},
     }
 
 
 
 createConfig :  List [FromLineToLine  I32 I32], CommandType, Set ModifiersType, List PatternType -> ConfigType
 createConfig = \  limit, command, modifiers, patterns -> 
-    {limit : limit, command : command, modifiers : modifiers, patterns : patterns}
+    {limit : limit, command : command, modifiers : modifiers, patterns : patterns, regexMagic : regexMagic,}
 
 
 create : Str -> StateType
@@ -178,3 +183,4 @@ setTerminalHistory : StateType, List (List U8) -> StateType
 setTerminalHistory = \@StateType content, history -> 
     terminal =  content.terminal 
     @StateType { content & terminal : { terminal & commandHistory : history, historyCnt : -1 } }
+

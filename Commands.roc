@@ -102,6 +102,9 @@ createNumberLines : ParsingResultType, ConfigType -> Result ConfigType Str
 createNumberLines = \  parsResult, config ->
     Ok { config & modifiers : Set.insert config.modifiers NumberLines }
     
+andMode : ParsingResultType, ConfigType -> Result ConfigType Str
+andMode = \  parsResult, config ->
+    Ok { config & modifiers : Set.insert config.modifiers LogicAND }
 
 createBlackListed : ParsingResultType, ConfigType -> Result ConfigType Str
 createBlackListed = \  parsResult, config ->
@@ -209,7 +212,7 @@ modifierAnalysis = \ word, inState ->
         |> List.walkUntil (Ok inState) (\ state, pattern ->
             when state  is 
                 Ok config ->
-                        when Regex.parseStr word pattern is 
+                        when Regex.parseStrMagic word pattern inState.regexMagic is 
                             Ok parsed ->
                                 if parsed.matchFound == Bool.true then
                                     when Dict.get modifiersHandlers pattern  is
@@ -232,6 +235,7 @@ commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigTy
 commandsToHandlers =
     Dict.empty {}
     |> Dict.insert "^[Nn][Ll]@" createNumberLines
+    |> Dict.insert "^[Aa][Nn][Dd]@" andMode
     |> Dict.insert "([Rr])?@(.+)->([Rr])?@(.+)" createPatternToPattern
     |> Dict.insert "^(\\d+|s)->(\\d+|e)@$" createLineToLine
     |> Dict.insert "(([^@]+@)?(.*))" handleOthers
@@ -246,7 +250,7 @@ commandAnalysis = \ word, inState ->
     |> List.walkUntil (Ok inState) (\ state, pattern ->
         when state  is 
             Ok config -> 
-                when Regex.parseStr word pattern is 
+                when Regex.parseStrMagic word pattern inState.regexMagic is
                     Ok parsed -> 
                         if parsed.matchFound == Bool.true then
                             when Dict.get commandsToHandlers pattern  is

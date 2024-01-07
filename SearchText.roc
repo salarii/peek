@@ -1,7 +1,7 @@
 interface  SearchText
     exposes [evalSearch]
     imports [
-        Regex,
+        Regex.{MagicType},
         State.{PatternType,ConfigType,SectionType},
         Utils]
 
@@ -50,14 +50,14 @@ mergeLineProcessed = \ leftLst, rightLst, keep ->
             )
     merged.1
 
-coloring : List LineProcessedType -> Result (List LineProcessedType ) Str
-coloring = \ lines ->
+coloring : List LineProcessedType, ConfigType -> Result (List LineProcessedType ) Str
+coloring = \ lines, config ->
     colored =
         List.map  lines (\ line->
             Set.walk line.color (Ok line) (\ stateResult, pattern ->
                 when stateResult is 
                     Ok state ->
-                        when searchPattern line.content pattern is 
+                        when searchPattern line.content pattern config is 
                             Ok searchResult -> 
                                 if searchResult.status != Miss then
                                     Ok { state & line : mergeColors [line.line, searchResult.line] }
@@ -84,7 +84,7 @@ coloring = \ lines ->
        
 evalSearch : List Str, ConfigType -> Str
 evalSearch = \ content, config ->
-
+    matchAll = Set.contains  config.modifiers LogicAND
     numIdxLen = Utils.strUtfLen( Num.toStr (List.len content) )
     printLine :  LineProcessedType, (Bool, Nat) -> Str 
     printLine = \ processed, printLineNumber -> 
@@ -133,17 +133,17 @@ evalSearch = \ content, config ->
                 List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
                     when result is 
                         Ok resultRegister -> 
-                            Continue (analyseLine line config.patterns resultRegister)
+                            Continue (analyseLine line config.patterns resultRegister matchAll config)
                         Err message -> Break (Err message)
                 )
                 |> ( \searchResult ->
                     when searchResult is
                         Ok searched ->
-                            when coloring searched is 
+                            when coloring searched config is 
                                 Ok colored ->
                                     List.walk colored "" (\ out, item ->
                                         out 
-                                        |>Str.concat (printLine item (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
+                                        |>Str.concat (printLine item (Set.contains  config.modifiers NumberLines, numIdxLen + 1))
                                     )
                                 Err message -> message
 
@@ -154,14 +154,14 @@ evalSearch = \ content, config ->
                     List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
                         when result is 
                             Ok resultRegister -> 
-                                Continue (analyseLine line config.patterns resultRegister)
+                                Continue (analyseLine line config.patterns resultRegister matchAll config)
                             Err message -> Break (Err message)
                     )
                 rangesProcessed =
                     List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
                         when result is 
                             Ok resultRegister -> 
-                                Continue (analyseLine line [fromPat, toPat] resultRegister)
+                                Continue (analyseLine line [fromPat, toPat] resultRegister Bool.false config)
                             Err message -> Break (Err message)
                     )
                 when (patternsProcessed, rangesProcessed )  is 
@@ -196,7 +196,7 @@ evalSearch = \ content, config ->
                         )
                         |> ( \ regions -> 
                             List.walkUntil regions.2 "" (\ totalOut, region ->
-                                when coloring region is
+                                when coloring region config is
                                     Ok colored ->
                                         regionOut =
                                             List.walk colored "" (\ out, line ->
@@ -218,14 +218,14 @@ evalSearch = \ content, config ->
                     List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
                         when result is 
                             Ok resultRegister -> 
-                                Continue (analyseLine line config.patterns resultRegister)
+                                Continue (analyseLine line config.patterns resultRegister matchAll config)
                             Err message -> Break (Err message)
                     )
                 hotProcessed =
                     List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
                         when result is 
                             Ok resultRegister -> 
-                                Continue (analyseLine line [section.pattern] resultRegister)
+                                Continue (analyseLine line [section.pattern] resultRegister Bool.false config)
                             Err message -> Break (Err message)
                     )
                 when (patternsProcessed, hotProcessed )  is 
@@ -233,7 +233,7 @@ evalSearch = \ content, config ->
                         mergeLineProcessed patterns hot (Set.fromList [section.pattern])
                         |> filterRegion [section]
                         |> List.walkUntil "" (\ totalOut, sec -> 
-                                when coloring sec is
+                                when coloring sec config is
                                     Ok colored ->
                                         sectionOut =
                                             List.walk colored "" (\ out, line ->
@@ -264,8 +264,9 @@ convertToColor = \ pattern ->
             Color pat
         _-> pattern
 
-analyseLine : LineInput, List PatternType, List LineProcessedType -> Result (List LineProcessedType) Str   
-analyseLine = \ lineData, patterns, register ->
+# ConfigType walkaround here
+analyseLine : LineInput, List PatternType, List LineProcessedType, Bool, ConfigType -> Result (List LineProcessedType) Str   
+analyseLine = \ lineData, patterns, register, matchAll, config ->
     sortPatterns = 
         List.walk patterns {allow : Set.empty {}, block : Set.empty {}, color : Set.empty {} } (\state,  pattern -> 
             when pattern is 
@@ -291,18 +292,32 @@ analyseLine = \ lineData, patterns, register ->
     miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, content: lineData.line,status : Miss, color : sortPatterns.color }
     allowStageResult = 
         if Set.isEmpty sortPatterns.allow == Bool.false then
-            Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
-                when stateResult is 
-                    Ok state ->
-                        when searchPattern lineData.line pattern is 
-                            Ok searchResult -> 
-                                if searchResult.status != Miss then
-                                    Break ( Ok { state & line : searchResult.line, status : searchResult.status, color : Set.remove state.color (convertToColor pattern)})
-                                else
-                                    Continue ( Ok { state &  color :  Set.remove state.color (convertToColor pattern)})
-                            Err message -> Break (Err message)
-                    Err message -> Break (Err message)
-                )
+            if matchAll == Bool.true then
+                Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
+                    when stateResult is 
+                        Ok state ->
+                            when searchPattern lineData.line pattern config is 
+                                Ok searchResult -> 
+                                    if searchResult.status != Miss then
+                                        Continue ( Ok { state & line : searchResult.line, status : searchResult.status})
+                                    else
+                                        Break ( Ok  state )
+                                Err message -> Break (Err message)
+                        Err message -> Break (Err message)
+                    )
+            else 
+                Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
+                    when stateResult is 
+                        Ok state ->
+                            when searchPattern lineData.line pattern config is 
+                                Ok searchResult -> 
+                                    if searchResult.status != Miss then
+                                        Break ( Ok { state & line : searchResult.line, status : searchResult.status, color : Set.remove state.color (convertToColor pattern)})
+                                    else
+                                        Continue ( Ok { state &  color :  Set.remove state.color (convertToColor pattern)})
+                                Err message -> Break (Err message)
+                        Err message -> Break (Err message)
+                    )
         else
             Ok miss
 
@@ -316,7 +331,7 @@ analyseLine = \ lineData, patterns, register ->
                     Set.walkUntil sortPatterns.block (Ok Miss) (\ stateResult, pattern ->
                             when  stateResult is
                                 Ok state ->
-                                    when searchPattern lineData.line pattern is 
+                                    when searchPattern lineData.line pattern config is 
                                         Ok searchResult -> 
                                             if searchResult.status != Miss then
                                                 Break (Ok searchResult.status)
@@ -337,13 +352,13 @@ analyseLine = \ lineData, patterns, register ->
                     Ok (List.append  register allowStage)
         Err message -> Err message 
 
-searchPattern : Str, PatternType -> Result { line : LineAnalyzedType, status : LineSearchResultType }  Str
-searchPattern = \ line, pattern ->
+searchPattern : Str, PatternType, ConfigType -> Result { line : LineAnalyzedType, status : LineSearchResultType }  Str
+searchPattern = \ line, pattern, config ->
     when pattern is 
         Regex inside ->
             when inside is 
                 Allow pat | Color pat | Blacklist pat -> 
-                    when regexWordMatch line pat { content : [], separator : [] } is 
+                    when regexWordMatch line pat { content : [], separator : [] } config.regexMagic is 
                         Ok searched -> 
                             if List.isEmpty searched.separator == Bool.false then
                                 if List.len searched.separator + 1 == List.len searched.content then
@@ -457,23 +472,23 @@ plainWordMatch = \ word, pattern ->
         lst -> 
             { content : lst, separator : List.repeat  pattern ((List.len lst) - 1) }
 
-regexWordMatch : Str, Str, LineAnalyzedType -> Result LineAnalyzedType  Str
-regexWordMatch = \ word, pattern, register ->
+regexWordMatch : Str, Str, LineAnalyzedType, MagicType -> Result LineAnalyzedType  Str
+regexWordMatch = \ word, pattern, register, magic ->
     if  Str.isEmpty word then 
         if List.len register.content == List.len register.content  then
             Ok { register & content : List.append register.content "" } 
         else  
             Ok register 
-    else 
-        when Regex.parseStr word pattern is 
+    else
+        when Regex.parseStrMagic word pattern magic is 
             Ok parsed ->
                 if parsed.matchFound == Bool.true then 
                         current =
                         {
                             content : List.append register.content (Utils.utfToStr parsed.missed),
-                            separator : List.append register.content (Utils.utfToStr parsed.matched)
+                            separator : List.append register.separator (Utils.utfToStr parsed.matched)
                         }
-                        regexWordMatch word (Utils.utfToStr parsed.left) current 
+                        regexWordMatch (Utils.utfToStr parsed.left) pattern current magic
                 else
                     Ok ( {content : List.append register.content word, separator : register.separator })
             Err message -> Err message 
