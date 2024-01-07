@@ -14,7 +14,7 @@ LineInput : {number : U32, line : Str }
 
 LineAnalyzedType : { content : List  Str, separator : List  Str }
 
-LineProcessedType : { number : U32 , line : LineAnalyzedType, status : LineSearchResultType, color : Set PatternType }
+LineProcessedType : { number : U32 , line : LineAnalyzedType, content : Str, status : LineSearchResultType, color : Set PatternType }
 
 mergeLineProcessed : List LineProcessedType, List LineProcessedType, Set PatternType -> List LineProcessedType
 mergeLineProcessed = \ leftLst, rightLst, keep ->
@@ -50,7 +50,38 @@ mergeLineProcessed = \ leftLst, rightLst, keep ->
             )
     merged.1
 
-
+coloring : List LineProcessedType -> Result (List LineProcessedType ) Str
+coloring = \ lines ->
+    colored =
+        List.map  lines (\ line->
+            Set.walk line.color (Ok line) (\ stateResult, pattern ->
+                when stateResult is 
+                    Ok state ->
+                        when searchPattern line.content pattern is 
+                            Ok searchResult -> 
+                                if searchResult.status != Miss then
+                                    Ok { state & line : mergeColors [line.line, searchResult.line] }
+                                else
+                                    Ok state
+                            Err message -> Err message
+                    Err message -> Err message
+                ))
+    (List.walkUntil colored (Bool.false, "") ( \ isErrorFlag, result ->
+            when  result is 
+                Ok _ -> Continue isErrorFlag
+                Err message -> Break (Bool.false, message)
+            ))
+    |> (\ coloringResult -> 
+        if coloringResult.0 == Bool.true then
+            Err coloringResult.1 
+        else 
+            Ok (List.map colored (\ lineColRes ->
+                when lineColRes is 
+                   Ok coloredLine -> coloredLine
+                   Err _ -> { number : 0, line : { content : [], separator : [] }, content : "", status : Miss, color : Set.empty {} }
+                )
+            ))  
+       
 evalSearch : List Str, ConfigType -> Str
 evalSearch = \ content, config ->
 
@@ -108,10 +139,13 @@ evalSearch = \ content, config ->
                 |> ( \searchResult ->
                     when searchResult is
                         Ok searched ->
-                            List.walk searched "" (\ out, item ->
-                                out 
-                                |>Str.concat (printLine item (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
-                            )
+                            when coloring searched is 
+                                Ok colored ->
+                                    List.walk colored "" (\ out, item ->
+                                        out 
+                                        |>Str.concat (printLine item (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
+                                    )
+                                Err message -> message
 
                         Err message -> message 
                         )
@@ -161,14 +195,20 @@ evalSearch = \ content, config ->
                                         state
                         )
                         |> ( \ regions -> 
-                            List.walk regions.2 "" (\ totalOut, region -> 
-                                regionOut =
-                                    List.walk region "" (\ out, line ->
-                                        out
-                                        |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
-                                        )
-                                Str.concat totalOut regionOut
-                                |> Str.concat "\n\r----------------------------------------------------\n\r"
+                            List.walkUntil regions.2 "" (\ totalOut, region ->
+                                when coloring region is
+                                    Ok colored ->
+                                        regionOut =
+                                            List.walk colored "" (\ out, line ->
+                                                out
+                                                |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
+                                                )
+                                        Continue 
+                                            (
+                                                Str.concat totalOut regionOut
+                                                |> Str.concat "\n\r----------------------------------------------------\n\r"
+                                            )
+                                    Err message -> Break ( message )
                             ))
                                 
                     (Err message , _ ) ->  message
@@ -192,14 +232,20 @@ evalSearch = \ content, config ->
                     (Ok patterns, Ok hot ) ->
                         mergeLineProcessed patterns hot (Set.fromList [section.pattern])
                         |> filterRegion [section]
-                        |> List.walk "" (\ totalOut, sec -> 
-                                sectionOut =
-                                    List.walk sec "" (\ out, line ->
-                                        out
-                                        |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
-                                        )
-                                Str.concat totalOut sectionOut
-                                |> Str.concat "\n\r----------------------------------------------------\n\r"
+                        |> List.walkUntil "" (\ totalOut, sec -> 
+                                when coloring sec is
+                                    Ok colored ->
+                                        sectionOut =
+                                            List.walk colored "" (\ out, line ->
+                                                out
+                                                |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
+                                                )
+                                        Continue 
+                                            (
+                                                Str.concat totalOut sectionOut
+                                                |> Str.concat "\n\r----------------------------------------------------\n\r"
+                                            )
+                                    Err message -> Break ( message )
                             )
                     (Err message , _ ) ->  message
                     (Ok _, Err message ) -> message
@@ -242,7 +288,7 @@ analyseLine = \ lineData, patterns, register ->
                     { state &  color : Set.insert state.color pattern }
                 _-> state
                 )
-    miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, status : Miss, color : sortPatterns.color }
+    miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, content: lineData.line,status : Miss, color : sortPatterns.color }
     allowStageResult = 
         if Set.isEmpty sortPatterns.allow == Bool.false then
             Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
@@ -337,7 +383,6 @@ mergeColors = \ lst ->
             [] -> List.append state  []
             )
     |> (\ colorDefLst ->
-            dbg  colorDefLst
             when colorDefLst is
                 [head, .. as tail] ->
                     List.walk  tail head ( \ state, new -> 
