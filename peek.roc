@@ -29,7 +29,7 @@ mainLoop = \ state  ->
         Task.ok (Done {})
     else 
         Task.ok (Step termstate )
-peekConsole = "This is peek app : ) \n\n"
+peekConsole = "This is peek app :) , you are in terminal mode\n\rfor more info issue help@ command\n\n"
 
 main =
     {} <- Stdout.line peekConsole |> Task.await    

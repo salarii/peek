@@ -11,7 +11,8 @@ interface  System
         storeHistory,
         checkListOfDirsGiveSet,
         stripPath,
-        listEntries]
+        listEntries,
+        switchHistory]
 
     imports [
         pf.Stdin, 
@@ -522,6 +523,7 @@ storeHistoryInternal = \ state, storePath ->
     toStore =
         (State.getTerminalState state).commandHistory
         |> List.map ( \ cmd -> Utils.utfToStr cmd)
+        |> List.takeFirst 500
         |> List.walk "" (\ out, cmd ->
             Str.concat out  cmd 
             |> Str.concat "\n" )
