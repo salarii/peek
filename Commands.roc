@@ -7,7 +7,7 @@ interface Commands
         Utils,
         Regex,
         SearchText,
-        Regex.{ParsingResultType},
+        Regex.{ParsingResultType, regexMagic},
         State,
         System,
         State.{StateType, PatternType, ModifiersType, CommandType, ConfigType},
@@ -287,19 +287,70 @@ handleUserCommand = \ state, commandPatRaw ->
     mode = State.getAppMode state
     pickAndExecute : List Str -> Task StateType * 
     pickAndExecute = \ comLst ->
+    
+        buildExeConfig : List Str -> Task StateType * 
+        buildExeConfig = \ commands -> 
+            configResult = recoverConfigFromInput commands
+            when configResult is
+                Ok config -> 
+                    toDisplay =
+                        State.getFile state
+                        |> SearchText.evalSearch config
+                    Task.ok (State.setCommandOutput state toDisplay) 
+                Err message -> 
+                    Task.ok (State.setCommandOutput state message) 
+        
         if mode == System then 
             exeState <- System.executeCommand state comLst |> Task.await
             Task.ok exeState
         else if mode == Search then 
-            configResult = recoverConfigFromInput comLst
-                when configResult is
-                    Ok config -> 
-                        toDisplay =
-                            State.getFile state
-                            |> SearchText.evalSearch config
-                        Task.ok (State.setCommandOutput state toDisplay) 
-                    Err message -> 
-                        Task.ok (State.setCommandOutput state message) 
+            magic = Regex.regexMagic
+            List.walkUntil comLst (Ok []) ( \ lstRes, command ->
+                when  lstRes is
+                    Ok lst ->
+                        when Regex.parseStrMagic command "^fc@(.+)$" magic is 
+                            Ok parsed ->
+                                if parsed.matchFound == Bool.true then
+                                    #when Regex.getValue [0] 0 parsed.captured,is   #  accidental ',' crashes compiler
+                                    when Regex.getValue [0] 0 parsed.captured is 
+                                        Ok fileName ->
+                                            Continue (Ok (List.append lst (Utils.utfToStr fileName)))
+                                        _ ->
+                                            Break (Err "weird problem in \(command) evaluation")
+                                else 
+                                    Continue lstRes
+                            Err message -> Break (Err message)
+                    Err message -> Break (Err message)
+            )
+            |> (\ fileResult -> 
+                when fileResult is 
+                    Ok fileLst ->
+                        if List.isEmpty fileLst then
+                            buildExeConfig comLst
+                        else 
+                            gatherPat = 
+                                List.walk fileLst  (Task.ok []) (\ result, file ->
+                                    lstResult <- result |> Task.attempt
+                                    when lstResult is
+                                        Ok  lst ->  
+                                            #when  I try to use below it crashes
+                                            #comFromFileResult <- System.loadCommands "file" |> Task.attempt 
+                                            commandsResult <- File.readUtf8 (Path.fromStr file) |> Task.attempt
+                                            when commandsResult is 
+                                                Ok commands -> 
+                                                    Task.ok  (List.concat  lst (Utils.tokenize commands))
+                                                Err _ -> Task.err  "fail to load commands"
+                                        Err message ->  result
+                                )
+                            comFromFilesResult <-gatherPat |> Task.attempt
+                            when comFromFilesResult is 
+                                Ok comFromFiles ->  
+                                    buildExeConfig (List.concat comLst comFromFiles)
+                                Err message -> Task.ok  (State.setCommandOutput state message)
+                            
+                    Err message ->Task.ok (State.setCommandOutput state message)
+                    )
+
         else # Search 
             Task.ok state
 

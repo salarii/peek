@@ -26,7 +26,7 @@ interface State
         AppModeType,
         SectionType,
         ]
-    imports [Regex.{regexMagic,MagicType}]
+    imports [Regex.{regexMagic, MagicType}]
 
 PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
 

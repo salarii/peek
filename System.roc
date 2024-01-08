@@ -12,6 +12,7 @@ interface  System
         checkListOfDirsGiveSet,
         stripPath,
         listEntries,
+        loadCommands,
         switchHistory]
 
     imports [
@@ -579,3 +580,10 @@ manipulateStore = \ state, operation ->
     else 
         Task.ok state
 
+loadCommands : Str -> Task (List Str) Str
+loadCommands = \ inFile -> 
+    commandsResult <- File.readUtf8 (Path.fromStr inFile) |> Task.attempt
+    when commandsResult is 
+        Ok commands -> 
+            Task.ok (Utils.tokenize commands)
+        Err _ -> Task.err  "fail to load commands"
