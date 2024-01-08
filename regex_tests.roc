@@ -10,9 +10,9 @@ app "testRegex"
 
 main =   
     kk =
-        when Regex.parseStr "white" "(u?white)" is 
+        when Regex.parseStr "white" "(u?w(h)i(t)e)" is 
             Ok parsed ->
-                dbg parsed.matchFound 
+                dbg parsed.captured 
                 parsed.matchFound == Bool.false
             Err mes -> mes == "test except of matching" 
 

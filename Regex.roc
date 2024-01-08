@@ -188,7 +188,7 @@ changeValue = \ tree, id, value->
                     Ok (changeElement treeValue idValue {node & value : List.append node.value value  } )
                 Err _ -> Err  "internal logic error"
 
-    when modifyActive tree id modify is 
+    when modifyActive tree id modify Bool.true is 
         Ok newTree -> newTree
         _ -> tree
 
@@ -215,8 +215,8 @@ addElement = \ tree, parentId ,node ->
             { cnt : tree.cnt + 1, content : (Dict.insert updatedContent  tree.cnt node )  }          
         Err _ -> { cnt : tree.cnt + 1, content : Dict.insert tree.content  tree.cnt node }
 
-modifyActive : TreeType, I32, (I32, TreeType -> Result TreeType Str)  -> Result  TreeType  Str 
-modifyActive = \ tree, headId, op ->
+modifyActive : TreeType, I32, (I32, TreeType -> Result TreeType Str), Bool  -> Result  TreeType  Str 
+modifyActive = \ tree, headId, op, allLevels ->
     when Dict.get tree.content headId  is 
         Ok head -> 
             if List.isEmpty head.children == Bool.true then
@@ -228,8 +228,11 @@ modifyActive = \ tree, headId, op ->
                             Ok child ->
                                 if child.locked == Bool.true then
                                     op headId tree
-                                else 
-                                    modifyActive tree nodeId op
+                                else
+                                    if allLevels == Bool.true then
+                                        modifyActive (Result.withDefault (op headId tree) tree) nodeId op allLevels
+                                    else
+                                        modifyActive tree nodeId op allLevels
                             Err _ -> Err  "internal logic error"
                     Err _ -> Err  "internal logic error"
                         
@@ -369,11 +372,11 @@ composeMatchedStructure = \ tree, id, tag ->
         when tag is 
             CaptureOpen -> 
                 if Dict.isEmpty tree.content == Bool.false then 
-                    modifyActive tree id addNewNode 
+                    modifyActive tree id addNewNode Bool.false
                 else
                     Err  "internal logic error"
             CaptureClose ->
-                modifyActive tree id lockNode
+                modifyActive tree id lockNode Bool.false
     when result is
         Ok newTree -> newTree
         Err _  -> tree

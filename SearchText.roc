@@ -537,7 +537,7 @@ filterRegion = \ lines, sections  ->
                             stateIn.0,
                             stateIn.1,
                             List.dropLast  stateIn.2 1
-                            |> List.append  ( List.sublist stateIn.1 { start: (longest - parsingResult.1 + 1), len: parsingResult.1 + 1 } )
+                            |> List.append  ( List.sublist stateIn.1 { start: (longest - parsingResult.1 ), len: parsingResult.1 + 1 } )
                         )
                     else
                         lastExtended = 
@@ -552,7 +552,7 @@ filterRegion = \ lines, sections  ->
                         )
                 )
                 |> ( \ modState ->     
-                        if parsingResult.2 > modState.0  then
+                        if parsingResult.2 >= modState.0  then
                             (parsingResult.2, modState.1, modState.2)
                         else
                             (modState.0 - 1, modState.1, modState.2))
