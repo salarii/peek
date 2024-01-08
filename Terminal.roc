@@ -90,8 +90,11 @@ guessPath = \ appState ->
         {} <- Stdout.write "\n" |> Task.await
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- Stdout.write group |> Task.await
-        _ <- Stdout.write homeLinePat |> Task.attempt
-        Task.ok appState
+        {} <- Stdout.write homeLinePat |> Task.await
+        {} <- Stdout.write (Utils.utfToStr (State.getTerminalState appState).prompt) |> Task.await
+        _ <- Stdout.write (Result.withDefault (Str.fromUtf8 (State.getTerminalState appState).content ) "") |> Task.attempt
+        cursorUpdated <-setCursor appState |> Task.await
+        Task.ok cursorUpdated
 
     terminal = State.getTerminalState  appState
     Utils.utfToStr terminal.content
