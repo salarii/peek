@@ -38,7 +38,7 @@ File Analyzing Mode Commands
 - Numbered Lines: Typing 'nl@' with other commands and pressing enter numbers each line in the result.
 - And mode: 'and@' in this mode of operation, only lines of text will be presented where the provided phrases and patterns are present.
 - Text Between Phrases/Patterns: Typing '@phrase->r@pattern' and pressing enter shows text between lines containing the specified phrase or regex pattern.
-- Specific Line Ranges: Typing 's->100@$', '100->e@$', or '100->200@$' and pressing enter shows text within these line ranges.
+- Specific Line Ranges: Typing 's->100@', '100->e@', or '100->200@' and pressing enter shows text within these line ranges.
 - Surrounding Lines: Typing '^10@phrase1', '>10r@pattern', or '<10@phrase2' and pressing enter shows lines around the specified phrase or pattern.
 
 Note: Some commands and phrases can be combined. Use common sense to figure out these combinations.

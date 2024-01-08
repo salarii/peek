@@ -60,7 +60,8 @@ coloring = \ lines, config ->
                         when searchPattern line.content pattern config is 
                             Ok searchResult -> 
                                 if searchResult.status != Miss then
-                                    Ok { state & line : mergeColors [line.line, searchResult.line] }
+                                    
+                                    Ok { state & line : mergeColors [state.line, searchResult.line] }
                                 else
                                     Ok state
                             Err message -> Err message
@@ -293,7 +294,7 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
     allowStageResult = 
         if Set.isEmpty sortPatterns.allow == Bool.false then
             if matchAll == Bool.true then
-                Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
+                Set.walkUntil sortPatterns.allow (Ok miss ) (\ stateResult, pattern ->
                     when stateResult is 
                         Ok state ->
                             when searchPattern lineData.line pattern config is 
@@ -301,7 +302,7 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                                     if searchResult.status != Miss then
                                         Continue ( Ok { state & line : searchResult.line, status : searchResult.status})
                                     else
-                                        Break ( Ok  state )
+                                        Break ( Ok  miss )
                                 Err message -> Break (Err message)
                         Err message -> Break (Err message)
                     )
