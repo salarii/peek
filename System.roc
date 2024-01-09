@@ -587,3 +587,7 @@ loadCommands = \ inFile ->
         Ok commands -> 
             Task.ok (Utils.tokenize commands)
         Err _ -> Task.err  "fail to load commands"
+        
+# saveInFile : Str,  Str -> Task  {}  *
+# saveInFile = \ content, file ->
+#     File.writeUtf8 (Path.fromStr file) content

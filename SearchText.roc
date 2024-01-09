@@ -83,7 +83,23 @@ coloring = \ lines, config ->
                 )
             ))  
        
-evalSearch : List Str, ConfigType -> Str
+createRawOut : List Str, List LineProcessedType -> Result  Str  Str
+createRawOut = \ rawLst, outLst ->
+    List.map outLst ( \line -> line.number )
+    |> List.walkTry  "" ( \ outStr, idx ->
+        when List.get rawLst (Num.toNat (idx-1)) is 
+            # when I have done this by accident it crashed 
+            # Ok rawLine ->
+            #         Str.concat outStr rawLine
+            #         |> Str.concat "\n"                    
+            Ok rawLine ->
+                Ok (
+                    Str.concat outStr rawLine
+                    |> Str.concat "\n"                    
+                )
+            Err _ -> Err "problem in processing output" )
+            
+evalSearch : List Str, ConfigType -> { terminal: Str, raw : Str }
 evalSearch = \ content, config ->
     matchAll = Set.contains  config.modifiers LogicAND
     numIdxLen = Utils.strUtfLen( Num.toStr (List.len content) )
@@ -105,7 +121,7 @@ evalSearch = \ content, config ->
             |> Str.concat "\n\r"
 
     if List.isEmpty content == Bool.true then
-        ""
+        { terminal: "", raw : "" }
     else 
         # this  should  be  done  in some other place
         lineNembersAdded = List.walk content ([],1) (\state,  line -> 
@@ -131,39 +147,37 @@ evalSearch = \ content, config ->
         
         when config.command is 
             Search -> 
-                List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
-                    when result is 
-                        Ok resultRegister -> 
-                            Continue (analyseLine line config.patterns resultRegister matchAll config)
-                        Err message -> Break (Err message)
+                List.walkTry lineNembersAdded.0 [] (\ register, line->
+                    analyseLine line config.patterns register matchAll config
                 )
                 |> ( \searchResult ->
                     when searchResult is
                         Ok searched ->
                             when coloring searched config is 
                                 Ok colored ->
-                                    List.walk colored "" (\ out, item ->
-                                        out 
-                                        |>Str.concat (printLine item (Set.contains  config.modifiers NumberLines, numIdxLen + 1))
-                                    )
-                                Err message -> message
+                                    when createRawOut content colored  is 
+                                        Ok rawStr -> 
+                                            { 
+                                                terminal:
+                                                    List.walk colored "" (\ out, item ->
+                                                        out 
+                                                        |>Str.concat (printLine item (Set.contains  config.modifiers NumberLines, numIdxLen + 1))
+                                                    ),
+                                                raw : rawStr
+                                            }
+                                        Err message -> { terminal: message, raw : "" }
+                                Err message -> { terminal: message, raw : "" }
 
-                        Err message -> message 
+                        Err message -> { terminal: message, raw : "" }
                         )
             FromPatternToPattern fromPat toPat ->
                 patternsProcessed =
-                    List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
-                        when result is 
-                            Ok resultRegister -> 
-                                Continue (analyseLine line config.patterns resultRegister matchAll config)
-                            Err message -> Break (Err message)
+                    List.walkTry lineNembersAdded.0 [] (\ register, line->
+                        analyseLine line config.patterns register matchAll config
                     )
                 rangesProcessed =
-                    List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
-                        when result is 
-                            Ok resultRegister -> 
-                                Continue (analyseLine line [fromPat, toPat] resultRegister Bool.false config)
-                            Err message -> Break (Err message)
+                    List.walkTry lineNembersAdded.0 [] (\ register, line->
+                        analyseLine line [fromPat, toPat] register Bool.false config
                     )
                 when (patternsProcessed, rangesProcessed )  is 
                     (Ok patterns, Ok ranges ) ->
@@ -196,7 +210,7 @@ evalSearch = \ content, config ->
                                         state
                         )
                         |> ( \ regions -> 
-                            List.walkUntil regions.2 "" (\ totalOut, region ->
+                            List.walkTry regions.2 "" (\ totalOut, region ->
                                 when coloring region config is
                                     Ok colored ->
                                         regionOut =
@@ -204,36 +218,44 @@ evalSearch = \ content, config ->
                                                 out
                                                 |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
                                                 )
-                                        Continue 
-                                            (
-                                                Str.concat totalOut regionOut
-                                                |> Str.concat "\n\r----------------------------------------------------\n\r"
+                                                
+                                        Ok ( 
+                                            Str.concat totalOut regionOut
+                                            |> Str.concat "\n\r-----------------------------\n\r "
                                             )
-                                    Err message -> Break ( message )
-                            ))
+                                    Err message -> Err message
+                            )
+                            |> ( \ outStrResult ->
+                                when outStrResult is 
+                                    Ok outStr -> 
+                                        when createRawOut content (List.join regions.2)  is 
+                                            Ok rawStr -> 
+                                                { 
+                                                    terminal: outStr,
+                                                    raw : rawStr
+                                                }
+                                            Err message -> { terminal: message, raw : "" }
+                                    Err message -> { terminal: message, raw : "" }
+                                 )
+                            )
                                 
-                    (Err message , _ ) ->  message
-                    (Ok _, Err message ) -> message
+                    (Err message , _ ) ->  { terminal: message, raw : "" }
+                    (Ok _, Err message ) -> { terminal: message, raw : "" }
             SearchSection section ->        
                 patternsProcessed =
-                    List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
-                        when result is 
-                            Ok resultRegister -> 
-                                Continue (analyseLine line config.patterns resultRegister matchAll config)
-                            Err message -> Break (Err message)
+                    List.walkTry lineNembersAdded.0 [] (\ register, line->
+                        analyseLine line config.patterns register matchAll config
                     )
                 hotProcessed =
-                    List.walkUntil lineNembersAdded.0 (Ok []) (\ result, line->
-                        when result is 
-                            Ok resultRegister -> 
-                                Continue (analyseLine line [section.pattern] resultRegister Bool.false config)
-                            Err message -> Break (Err message)
+                    List.walkTry lineNembersAdded.0  [] (\ register, line->
+                            analyseLine line [section.pattern] register Bool.false config
                     )
                 when (patternsProcessed, hotProcessed )  is 
                     (Ok patterns, Ok hot ) ->
-                        mergeLineProcessed patterns hot (Set.fromList [section.pattern])
-                        |> filterRegion [section]
-                        |> List.walkUntil "" (\ totalOut, sec -> 
+                        merged = mergeLineProcessed patterns hot (Set.fromList [section.pattern])
+                        sections = filterSections merged [section]
+
+                        List.walkTry sections "" (\ totalOut, sec -> 
                                 when coloring sec config is
                                     Ok colored ->
                                         sectionOut =
@@ -241,17 +263,31 @@ evalSearch = \ content, config ->
                                                 out
                                                 |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
                                                 )
-                                        Continue 
+                                        Ok 
                                             (
                                                 Str.concat totalOut sectionOut
-                                                |> Str.concat "\n\r----------------------------------------------------\n\r"
+                                                |> Str.concat "\n\r-----------------------------\n\r"  
                                             )
-                                    Err message -> Break ( message )
+                                    Err message -> Err message
                             )
-                    (Err message , _ ) ->  message
-                    (Ok _, Err message ) -> message
-                    
-            _ -> "not supported yet"
+                        |> (( \ outStrResult ->
+                                when outStrResult is 
+                                    Ok outStr -> 
+                                        when createRawOut content (List.join sections)  is 
+                                            Ok rawStr -> 
+                                                { 
+                                                    terminal: outStr,
+                                                    raw : rawStr
+                                                }
+                                            Err message -> { terminal: message, raw : "" }
+                                    Err message -> { terminal: message, raw : "" }
+                                 )
+                            
+                            
+                        )
+                    (Err message , _ ) -> { terminal: message, raw : "" }
+                    (Ok _, Err message ) -> { terminal: message, raw : "" }        
+            _ -> { terminal: "not supported yet", raw : "" }
 
 convertToColor : PatternType -> PatternType 
 convertToColor = \ pattern -> 
@@ -495,8 +531,8 @@ regexWordMatch = \ word, pattern, register, magic ->
             Err message -> Err message 
 
 # in this function I want to experiment with tuples as state in walk (will I be able to maintain this in long run ??)
-filterRegion : List LineProcessedType, List SectionType -> List (List LineProcessedType)
-filterRegion = \ lines, sections  -> 
+filterSections : List LineProcessedType, List SectionType -> List (List LineProcessedType)
+filterSections = \ lines, sections  -> 
     if List.len  sections == 0 then
         []
     else
@@ -604,5 +640,5 @@ filterRegion = \ lines, sections  ->
                             ))
                     |> nextLineParse line 
                 )
-        analysysDone.2
+        List.dropIf analysysDone.2 (\lst -> List.isEmpty lst)
   
