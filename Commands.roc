@@ -163,6 +163,30 @@ createLineToLine = \  parsResult, config ->
                         Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
             _ -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
     
+    
+mergeConfigs : ConfigType, ConfigType  -> ConfigType
+mergeConfigs = \configDest, newConfig ->
+    updateCommand  = 
+        if configDest.command == None ||
+           (configDest.command == Search && newConfig.command != None ) then
+            newConfig.command
+        else 
+            configDest.command 
+            
+    mergedlimit = List.concat  configDest.limit newConfig.limit   
+
+    mergedmodifiers = Set.union configDest.modifiers newConfig.modifiers
+    mergedPatterns = List.concat  configDest.patterns newConfig.patterns
+
+    {
+        configDest  & 
+            command : updateCommand,
+            limit : mergedlimit, 
+            patterns: mergedPatterns, 
+            modifiers: mergedmodifiers,
+    }
+
+    
 handleOthers : ParsingResultType, ConfigType -> Result ConfigType Str
 handleOthers = \  parsResult, config ->
     when (Regex.getValue [0, 0] 0 parsResult.captured,
@@ -186,10 +210,10 @@ handleOthers = \  parsResult, config ->
                             if partialConfig.command == None then
                                 Ok {config & patterns : List.append config.patterns (Allow merged)}
                             else
-                                Ok {partialConfig  & limit : List.concat config.limit partialConfig.limit, patterns: List.concat config.patterns partialConfig.patterns, modifiers: Set.union config.modifiers partialConfig.modifiers }
+                                Ok (mergeConfigs config  partialConfig)
                         Err message -> 
-                            Ok {config & patterns : List.append config.patterns (Allow merged)})
-
+                            Err ("Error when processing \(Utils.utfToStr parsResult.matched) comand")
+                )
         _ -> Err "Error when processing \(Utils.utfToStr parsResult.matched) comand"
 
 modifiersHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
@@ -245,12 +269,12 @@ simplifiedSyntax =
     Dict.empty {}
 
 commandAnalysis : Str, ConfigType -> Result ConfigType Str
-commandAnalysis = \ word, inState -> 
+commandAnalysis = \ word, inConfig -> 
     Dict.keys commandsToHandlers
-    |> List.walkUntil (Ok inState) (\ state, pattern ->
+    |> List.walkUntil (Ok inConfig) (\ state, pattern ->
         when state  is 
             Ok config -> 
-                when Regex.parseStrMagic word pattern inState.regexMagic is
+                when Regex.parseStrMagic word pattern inConfig.regexMagic is
                     Ok parsed -> 
                         if parsed.matchFound == Bool.true then
                             when Dict.get commandsToHandlers pattern  is
@@ -269,8 +293,10 @@ recoverConfigFromInput = \filterStr ->
     List.walkUntil filterStr (Ok (State.createConfig [] Search (Set.empty {}) [] )) (\ state, word ->
         when state is 
             Ok config -> 
+                
                 when commandAnalysis word config is 
-                    Ok updatedConfig -> Continue (Ok updatedConfig )
+                    Ok updatedConfig -> 
+                        Continue (Ok updatedConfig )
                     Err message ->  Break (Err message)
             Err message -> Break (Err message)
             ) 
