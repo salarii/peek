@@ -1,5 +1,5 @@
 interface Utils
-    exposes [asciiArrayToNumber, tokenize, utfToStr, modifyLastInList, withColor, tokenizeNewLine, fillSpacesUpTo, strUtfLen]
+    exposes [asciiArrayToNumber, filterEmpty, tokenize, utfToStr, modifyLastInList, withColor, tokenizeNewLine, fillSpacesUpTo, strUtfLen]
     imports []
 
 withColor : Str, [Red, Green, Blue]-> Str
@@ -26,7 +26,16 @@ tokenizeNewLine  = \ newLine  ->
     Str.replaceEach newLine "\r" ""
     |> Str.split  "\n"
 
-
+filterEmpty : List Str -> List Str  
+filterEmpty = \ inLst -> 
+    List.walk  inLst [] ( \ out, line ->
+        if Str.isEmpty (Str.trimEnd line) == Bool.true then
+            out
+        else 
+            List.append out line
+    )
+    
+    
 utfToStr : List U8  -> Str
 utfToStr = \ lst ->
     when  Str.fromUtf8 lst  is 

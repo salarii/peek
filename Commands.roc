@@ -397,7 +397,7 @@ handleUserCommand = \ state, commandPatRaw ->
                                         Task.ok (
                                             
                                             State.setCommandOutput state  "Enter file analyze mode\n\rEnter filters and execute search"  
-                                            |> State.setFile  (Utils.tokenizeNewLine file)
+                                            |> State.setFile  (Utils.filterEmpty ( Utils.tokenizeNewLine file ) )
                                             |> State.setAppMode Search
                                             |> System.switchHistory Search
                                             |> State.updatePrompt )
