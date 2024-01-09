@@ -28,7 +28,14 @@ interface State
         ]
     imports [Regex.{regexMagic, MagicType}]
 
-PatternType : [ Regex [Allow Str,Color Str, Blacklist Str], Allow Str, Blacklist Str, Color Str  ]
+PatternType : 
+    [ 
+        Regex [Allow Str,Color Str, Blacklist Str],
+        Allow Str,
+        Blacklist Str,
+        Color Str,
+        LogicalAnd 
+            (List [Allow Str, Blacklist Str, Regex [Allow Str, Blacklist Str]]) ]
 
 ModifiersType : [ NumberLines, LogicAND]
 

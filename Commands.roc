@@ -104,7 +104,19 @@ createNumberLines = \  parsResult, config ->
     
 andMode : ParsingResultType, ConfigType -> Result ConfigType Str
 andMode = \  parsResult, config ->
-    Ok { config & modifiers : Set.insert config.modifiers LogicAND }
+    when Regex.getValue [0] 0 parsResult.captured is
+        Ok patterns ->
+            inConfigResult = 
+                Utils.tokenize (Utils.utfToStr patterns)
+                |> recoverConfigFromInput 
+            when inConfigResult is 
+                Ok inConfig ->
+                    if inConfig.command == Search then
+                        Ok config
+                    else 
+                        Err "Error in parsing and@ command"
+                Err _ ->  Err "Error in parsing and@ command"
+        _ -> Err "Error in parsing and@ command"
 
 createBlackListed : ParsingResultType, ConfigType -> Result ConfigType Str
 createBlackListed = \  parsResult, config ->
@@ -259,7 +271,8 @@ commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigTy
 commandsToHandlers =
     Dict.empty {}
     |> Dict.insert "^[Nn][Ll]@" createNumberLines
-    |> Dict.insert "^[Aa][Nn][Dd]@" andMode
+    #|> Dict.insert "dsdsa" (\ type, config -> andMode type, config )  # those lines create cycles I am not sure they should be  
+    #|> Dict.insert "dsdsa"  andMode 
     |> Dict.insert "([Rr])?@(.+)->([Rr])?@(.+)" createPatternToPattern
     |> Dict.insert "^(\\d+|s)->(\\d+|e)@$" createLineToLine
     |> Dict.insert "(([^@]+@)?(.*))" handleOthers
@@ -288,16 +301,19 @@ commandAnalysis = \ word, inConfig ->
 
 recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \filterStr ->
-    List.walkUntil filterStr (Ok (State.createConfig [] Search (Set.empty {}) [] )) (\ state, word ->
-        when state is 
-            Ok config -> 
-                
-                when commandAnalysis word config is 
-                    Ok updatedConfig -> 
-                        Continue (Ok updatedConfig )
-                    Err message ->  Break (Err message)
-            Err message -> Break (Err message)
-            ) 
+    List.walkTry filterStr (State.createConfig [] Search (Set.empty {}) [] ) (\ config, word ->
+        when Regex.parseStrMagic word "^[Aa][Nn][Dd]@(.+)$" config.regexMagic is
+            Ok parsed -> 
+                if parsed.matchFound == Bool.true then
+                    andMode parsed config
+                else
+                    when commandAnalysis word config is 
+                        Ok updatedConfig -> 
+                            Ok updatedConfig
+                        Err message ->  Err message
+                        
+            Err message -> Err message
+        ) 
 
 replaceTilde : StateType, Str  -> Str
 replaceTilde = \state, str -> 

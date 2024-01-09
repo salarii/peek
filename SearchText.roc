@@ -301,11 +301,30 @@ convertToColor = \ pattern ->
             Color pat
         _-> pattern
 
+
+#DecomposePatternsType : {allow : Set.empty {}, block : Set.empty {}, color : Set.empty {} }
+decomposeEmpty : 
+    {
+        allow : Set PatternType, 
+        block : Set PatternType,
+        andAllowLst : List (Set PatternType),
+        andBlockLst : List (Set PatternType),
+        color : Set PatternType
+    }
+decomposeEmpty = 
+    {
+        allow : Set.empty {},
+        block : Set.empty {},
+        andAllowLst : [],
+        andBlockLst : [],
+        color : Set.empty {},
+    }
+
 # ConfigType walkaround here
 analyseLine : LineInput, List PatternType, List LineProcessedType, Bool, ConfigType -> Result (List LineProcessedType) Str   
 analyseLine = \ lineData, patterns, register, matchAll, config ->
     sortPatterns = 
-        List.walk patterns {allow : Set.empty {}, block : Set.empty {}, color : Set.empty {} } (\state,  pattern -> 
+        List.walk patterns decomposeEmpty (\state,  pattern -> 
             when pattern is 
                 Regex type ->
                     when type is
@@ -324,44 +343,111 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                     { state &  block : Set.insert state.block pattern }
                 Color pat -> 
                     { state &  color : Set.insert state.color pattern }
+                LogicalAnd  patternLst ->
+                    List.walk patternLst (Set.empty {},Set.empty {}) ( \ inState, andPattern -> 
+                        when  andPattern is 
+                            Allow pat ->  
+                                (Set.insert inState.0 (Allow pat), inState.1)
+                            Blacklist pat -> 
+                                (inState.0, Set.insert inState.1 (Blacklist pat))
+                            Regex (Allow pat) ->
+                                (Set.insert inState.0 (Regex  (Allow pat)), inState.1)
+                            Regex (Blacklist pat) -> 
+                                (inState.0, Set.insert inState.1 (Regex (Blacklist pat)))
+                        )
+                    |> (\ andSet -> 
+                        { state &
+                            andAllowLst : List.append state.andAllowLst andSet.0,
+                            andBlockLst : List.append state.andBlockLst andSet.1,
+                            color : Set.union  state.color andSet.0 } )
                 _-> state
                 )
     miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, content: lineData.line,status : Miss, color : sortPatterns.color }
     allowStageResult = 
         if Set.isEmpty sortPatterns.allow == Bool.false then
-            if matchAll == Bool.true then
-                Set.walkUntil sortPatterns.allow (Ok miss ) (\ stateResult, pattern ->
-                    when stateResult is 
-                        Ok state ->
-                            when searchPattern lineData.line pattern config is 
-                                Ok searchResult -> 
-                                    if searchResult.status != Miss then
-                                        Continue ( Ok { state & line : searchResult.line, status : searchResult.status})
-                                    else
-                                        Break ( Ok  miss )
-                                Err message -> Break (Err message)
-                        Err message -> Break (Err message)
+            List.walkUntil sortPatterns.andAllowLst (Ok miss ) (\ stateResult, andSet ->
+                when stateResult is 
+                    Ok state ->
+                        if state.status != Miss then
+                            Break (Ok state)
+                        else 
+                            Continue 
+                                (
+                                    Set.walkUntil andSet (Ok state) ( \ searchStateResult, pattern -> 
+                                        when searchStateResult is 
+                                            Ok searchState ->
+                                                when searchPattern lineData.line pattern config is 
+                                                    Ok searchResult -> 
+                                                        if searchResult.status != Miss then
+                                                            Continue ( Ok { searchState & line : searchResult.line, status : searchResult.status})
+                                                        else
+                                                            Break ( Ok  miss )
+                                                    Err message -> Break (Err message)
+                                            Err message -> Break (Err message)
+                                        )
+                                )
+                    Err message -> Break (Err message)
                     )
-            else 
-                Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
-                    when stateResult is 
-                        Ok state ->
-                            when searchPattern lineData.line pattern config is 
-                                Ok searchResult -> 
-                                    if searchResult.status != Miss then
-                                        Break ( Ok { state & line : searchResult.line, status : searchResult.status, color : Set.remove state.color (convertToColor pattern)})
-                                    else
-                                        Continue ( Ok { state &  color :  Set.remove state.color (convertToColor pattern)})
-                                Err message -> Break (Err message)
-                        Err message -> Break (Err message)
+                |> ( \ andAllowResult ->
+                    when andAllowResult is
+                        Ok andAllow ->
+                            if andAllow.status != Miss then
+                                List.walkUntil sortPatterns.andBlockLst (Ok andAllow ) (\ stateResult, andSet ->
+                                    when stateResult is 
+                                        Ok state ->
+                                            if  state.status == Miss then
+                                                Break (Ok andAllow)
+                                            else
+                                                Continue 
+                                                    (
+                                                    Set.walkUntil andSet   (Ok miss)  ( \ searchStateResult, pattern -> 
+                                                        when searchStateResult is 
+                                                            Ok searchState ->
+                                                                when searchPattern lineData.line pattern config is 
+                                                                    Ok searchResult -> 
+                                                                        if searchResult.status == Miss then
+                                                                            Continue ( Ok searchState )
+                                                                        else
+                                                                            Break ( Ok searchState )
+                                                                            #Break ( Ok {searchState & status : searchResult.status} )
+                                                                    Err message -> Break (Err message)                
+                                                            Err message -> Break (Err message)
+                                                        )
+                                                    )
+                                        Err message -> Break (Err message)
+                                    )
+                            else 
+                                andAllowResult
+                        Err message -> Err message  
+                    )
+                |> (\ andBlockResult ->
+                    when andBlockResult is 
+                        Ok andBlock ->
+                            if andBlock.status != Miss then
+                                Ok andBlock
+                            else
+                                Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
+                                    when stateResult is 
+                                        Ok state ->
+                                            when searchPattern lineData.line pattern config is 
+                                                Ok searchResult -> 
+                                                    if searchResult.status != Miss then
+                                                        Break ( Ok { state & line : searchResult.line, status : searchResult.status, color : Set.remove state.color (convertToColor pattern)})
+                                                    else
+                                                        Continue ( Ok { state &  color :  Set.remove state.color (convertToColor pattern)})
+                                                Err message -> Break (Err message)
+                                        Err message -> Break (Err message)
+                                    )
+                        Err message -> Err message
                     )
         else
             Ok miss
-
     when  allowStageResult is 
         Ok allowStage ->
-            if Set.isEmpty sortPatterns.allow == Bool.false && 
-                allowStage.status == Miss then
+            if (Set.isEmpty sortPatterns.allow == Bool.false ||
+               List.isEmpty sortPatterns.andAllowLst == Bool.false ||
+               List.isEmpty sortPatterns.andBlockLst == Bool.false) &&
+               allowStage.status == Miss then
                 Ok register
             else
                 if Set.isEmpty sortPatterns.block == Bool.false then
