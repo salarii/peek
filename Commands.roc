@@ -100,7 +100,6 @@ createSection = \  parsResult, config ->
 
 createNumberLines : ParsingResultType, ConfigType -> Result ConfigType Str
 createNumberLines = \  parsResult, config ->
-    dbg  "number"
     Ok { config & modifiers : Set.insert config.modifiers NumberLines }
     
 andMode : ParsingResultType, ConfigType -> Result ConfigType Str

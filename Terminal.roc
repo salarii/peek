@@ -414,7 +414,7 @@ parseRawStdin = \bytes ->
         [27, 91, 72,..] -> Shift Begin
         [27, 91, 70,..] -> Shift End 
         [9, ..] -> GuessPath
-        [27, val, cal,  ..] -> Quit
+        #[27, val, cal,  ..] -> Quit
         [3, ..] -> Quit
         other -> Characters other
         [] -> Empty
