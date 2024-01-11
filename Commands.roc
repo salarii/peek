@@ -100,6 +100,7 @@ createSection = \  parsResult, config ->
 
 createNumberLines : ParsingResultType, ConfigType -> Result ConfigType Str
 createNumberLines = \  parsResult, config ->
+    dbg  "number"
     Ok { config & modifiers : Set.insert config.modifiers NumberLines }
     
 andMode : ParsingResultType, ConfigType -> Result ConfigType Str
@@ -321,20 +322,22 @@ simplifiedSyntax =
 commandAnalysis : Str, ConfigType -> Result ConfigType Str
 commandAnalysis = \ word, inConfig -> 
     Dict.keys commandsToHandlers
-    |> List.walkTry inConfig (\ config, pattern ->
-        when Regex.parseStrMagic word pattern inConfig.regexMagic is
-            Ok parsed -> 
-                if parsed.matchFound == Bool.true then
-                    when Dict.get commandsToHandlers pattern  is
-                        Ok handler ->
-                            handler parsed config
-                        Err _ -> 
-                            Err "command  \(word) evaluation error"
-                else 
-                    Ok config
-            Err message -> Err message
-            
-        )
+    |> List.walkUntil (Ok inConfig) (\ state, pattern ->
+        when state  is 
+            Ok config -> 
+                when Regex.parseStrMagic word pattern inConfig.regexMagic is
+                    Ok parsed -> 
+                        if parsed.matchFound == Bool.true then
+                            when Dict.get commandsToHandlers pattern  is
+                                Ok handler ->
+                                    Break (handler parsed config)
+                                Err _ -> 
+                                    Break (Err "command  \(word) evaluation error")
+                        else 
+                            Continue state
+                    Err message -> Break (Err message)
+            Err message -> Break (Err message)
+         )
 
 recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \filterStr ->

@@ -101,6 +101,8 @@ createRawOut = \ rawLst, outLst ->
             
 evalSearch : List Str, ConfigType -> { terminal: Str, raw : Str }
 evalSearch = \ content, config ->
+    dbg  config.command
+    dbg  config.patterns
     matchAll = Set.contains  config.modifiers LogicAND
     numIdxLen = Utils.strUtfLen( Num.toStr (List.len content) )
     printLine :  LineProcessedType, (Bool, Nat) -> Str 
