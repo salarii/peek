@@ -111,23 +111,7 @@ andMode = \  parsResult, config ->
                 |> recoverConfigFromInput 
             when inConfigResult is 
                 Ok inConfig ->
-                    if inConfig.command == Search then
-                        #  maybe I am wrong on that but I would expect below to work, it does not
-                        # (
-                        # List.walkTry inConfig.patterns (LogicalAnd [] ) (\ andPattern, pattern ->   
-                        #     LogicalAnd  lst  = andPattern
-                        #     when  pattern is 
-                        #         Allow pat ->  
-                        #             Ok  (LogicalAnd [])
-                        #         _ -> Err "color cannot be used in and construction"
-                        # ))
-                        # |> (\ andPatternResult ->
-                        #     when andPatternResult  is 
-                        #         Ok andPattern ->
-                        #             Ok {config & patterns : [andPattern]}
-                        #         Err message -> Err message   
-                        # )
-                    
+                    if inConfig.command == Search then                    
                         (
                         List.walkTry inConfig.patterns [] (\ andLst, pattern ->   
                             when  pattern is 
@@ -342,25 +326,42 @@ recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \filterStr ->
     andEvaluatedResult = 
         Str.joinWith  filterStr " "
-        |> evalAndCommand (State.createConfig [] Search (Set.empty {}) [] ) ""
+        |> evalAndCommand (State.createConfig [] Search (Set.empty {}) [] ) 
         
-    evalAndCommand : Str, ConfigType, Str -> Result ( ConfigType, Str ) Str
-    evalAndCommand =  \ inCommand, config, left -> 
-        when Regex.parseStrMagic inCommand "^[Aa][Nn][Dd]@\\((.+)\\)\$" config.regexMagic is
-            Ok parsed -> 
-                if parsed.matchFound == Bool.true then
-                    when andMode parsed config is
-                        Ok updatedConfig ->  
-                            evalAndCommand (Utils.utfToStr parsed.left) updatedConfig ( Str.concat left (Utils.utfToStr parsed.missed) )
-                        Err message -> Err message 
+    evalAndCommand : Str, ConfigType -> Result ( ConfigType, Str, Str ) Str
+    evalAndCommand =  \ inCommand, config -> 
+        # While the design is not ideal, it was not something that I had anticipated.
+        when Regex.parseStrMagic inCommand "[Aa][Nn][Dd]@\\(" config.regexMagic is
+            Ok allParsed -> 
+                if allParsed.matchFound == Bool.true then
+                    processed = evalAndCommand (Utils.utfToStr allParsed.left) config  
+                    when processed is 
+                        Ok lowerProc ->
+                            when Regex.parseStrMagic lowerProc.1 "(.+)@\\)" config.regexMagic is
+                                Ok parsed ->
+                                    if parsed.matchFound == Bool.true then
+                                        when andMode parsed lowerProc.0 is
+                                            Ok updatedConfig ->
+                                                Ok  
+                                                    (
+                                                        updatedConfig,
+                                                        (Utils.utfToStr allParsed.missed),
+                                                        (Str.concat (Utils.utfToStr parsed.left) lowerProc.2)
+                                                    )   
+                                            Err message -> Err "Error in parsing and@ command" 
+                                    else
+                                        Err "Error in parsing and@ command"          
+                                Err message -> Err "Error in parsing and@ command" 
+                        _ -> Err "Error in parsing and@ command"                     
                 else
-                    Ok (config, Str.concat inCommand left)                    
+                    Ok (config, inCommand, "")
             Err message -> Err message 
-
+            
+            
     when andEvaluatedResult is 
         Ok andEvaluated -> 
-
-            List.walkTry (Utils.tokenize andEvaluated.1) (andEvaluated.0) (\ config, word ->
+            
+            List.walkTry (Utils.tokenize (Str.concat  andEvaluated.1 andEvaluated.2)) andEvaluated.0  (\ config, word ->
                 when commandAnalysis word config is 
                     Ok updatedConfig ->  Ok updatedConfig
                     Err message ->  Err message

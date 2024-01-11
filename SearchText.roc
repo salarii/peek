@@ -307,16 +307,14 @@ decomposeEmpty :
     {
         allow : Set PatternType, 
         block : Set PatternType,
-        andAllowLst : List (Set PatternType),
-        andBlockLst : List (Set PatternType),
+        andDecomposed : List { pattern: PatternType, decomposed : (Set PatternType, Set PatternType)},
         color : Set PatternType
     }
 decomposeEmpty = 
     {
         allow : Set.empty {},
         block : Set.empty {},
-        andAllowLst : [],
-        andBlockLst : [],
+        andDecomposed : [],
         color : Set.empty {},
     }
 
@@ -357,20 +355,18 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                         )
                     |> (\ andSet -> 
                         { state &
-                            andAllowLst : List.append state.andAllowLst andSet.0,
-                            andBlockLst : List.append state.andBlockLst andSet.1,
+                            andDecomposed : List.append state.andDecomposed {pattern: LogicalAnd  patternLst, decomposed : andSet},
                             color : Set.union  state.color (Set.map andSet.0 (\ allPat ->convertToColor allPat) ) } )
                 _-> state
                 )
     miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, content: lineData.line,status : Miss, color : sortPatterns.color }
     allowStageResult = 
         if (Set.isEmpty sortPatterns.allow == Bool.false ||
-            List.isEmpty sortPatterns.andAllowLst == Bool.false ||
-            List.isEmpty sortPatterns.andBlockLst == Bool.false) then
-            List.walkUntil sortPatterns.andAllowLst (Ok miss ) (\ stateResult, andSet ->
+            List.isEmpty sortPatterns.andDecomposed == Bool.false) then
+            List.walkUntil sortPatterns.andDecomposed (Ok miss ) (\ stateResult, andSet ->
                 when stateResult is 
                     Ok state ->
-                        (Set.walkUntil andSet (Ok miss) ( \ searchStateResult, pattern -> 
+                        (Set.walkUntil andSet.decomposed.0 (Ok miss) ( \ searchStateResult, pattern -> 
                             when searchStateResult is 
                                 Ok searchState ->
                                     when searchPattern lineData.line pattern config is 
@@ -387,21 +383,8 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                             when allowResult is
                                 Ok allow ->
                                     if allow.status != Miss then
-                                        Break (Ok state) 
-                                    else 
-                                        Continue  (Ok state)
-                                Err message -> Break (Err message) 
-                                )
-                    Err message -> Break (Err message)
-                    )
-                |> ( \ andAllowResult ->
-                    when andAllowResult is
-                        Ok andAllow ->
-                            if andAllow.status != Miss then
-                                List.walkUntil sortPatterns.andBlockLst (Ok miss ) (\ stateResult, andSet ->
-                                    when stateResult is 
-                                        Ok state ->
-                                            (Set.walkUntil andSet  (Ok miss)  ( \ searchStateResult, pattern -> 
+                                        #
+                                        (Set.walkUntil andSet.decomposed.1  (Ok miss)  ( \ searchStateResult, pattern -> 
                                                 when searchStateResult is 
                                                     Ok searchState ->
                                                         when searchPattern lineData.line pattern config is 
@@ -417,22 +400,22 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                                                 when blockResult is 
                                                     Ok block -> 
                                                         if block.status == Miss then
-                                                            Break (Ok andAllow)            
+                                                            Break (Ok {state &  status : Hit (andSet.pattern)})           
                                                         else 
-                                                            Continue  stateResult     
+                                                            Continue  (Ok state)     
                                                     Err message -> Break (Err message)
                                                     )
-                                        Err message -> Break (Err message)
+                                    else 
+                                        Continue  (Ok state)
+                                Err message -> Break (Err message) 
                                 )
-                            else 
-                                andAllowResult
-                        Err message -> Err message  
+                    Err message -> Break (Err message)
                     )
-                |> (\ andBlockResult ->
-                    when andBlockResult is 
-                        Ok andBlock ->
-                            if andBlock.status != Miss then
-                                Ok andBlock
+                |> (\ andResult ->
+                    when andResult is 
+                        Ok and ->
+                            if and.status != Miss then
+                                Ok and
                             else
                                 Set.walkUntil sortPatterns.allow (Ok miss) (\ stateResult, pattern ->
                                     when stateResult is 
@@ -453,8 +436,7 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
     when  allowStageResult is 
         Ok allowStage ->
             if (Set.isEmpty sortPatterns.allow == Bool.false ||
-               List.isEmpty sortPatterns.andAllowLst == Bool.false ||
-               List.isEmpty sortPatterns.andBlockLst == Bool.false) &&
+               List.isEmpty sortPatterns.andDecomposed == Bool.false ) &&
                allowStage.status == Miss then
                 Ok register
             else

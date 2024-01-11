@@ -81,7 +81,7 @@ StateType := {
     file: List Str,
     terminal : TerminalLineStateType,
     system : SystemDataType,  
-    config : SearchSetupType,
+    #config : SearchSetupType,
     mode : AppModeType,
     commandsHistory : { sys : HistoryType,  search : HistoryType},
     }
@@ -109,7 +109,7 @@ create = \ initialText ->
         file : [],
         terminal : init,
         system : {homePath : "", current : ""},
-        config : None,
+        #config : None,
         mode : System,
         commandsHistory : { sys : [],  search : []},
         }
