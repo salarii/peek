@@ -71,7 +71,7 @@ secondStagePatterns = [
 
 thirdStagePatterns: List  RecoverPatternType
 thirdStagePatterns =  [
-    { tag : BackSlash, str : "\\[.?{}^*]" },  # " #<- this artifact is for visual studio code 
+    { tag : BackSlash, str : "\\[.?{}()^*]" },  # " #<- this artifact is for visual studio code 
     { tag : Repetition, str : "{(\\d)+}"},   #"   
     { tag : RangeRepetition, str : "{(\\d)+,(\\d)+}" }, #"
     ]  # "
@@ -692,14 +692,14 @@ checkMatching = \ utfLst, reg  ->
             (Ok  (  tokenFirst) , Ok (  tokenLast) ) ->
                 when ( tokenFirst.tag, tokenLast.tag )  is 
                     (Character  first,Character  last )  ->
-                        if first == '^' && last == '$' then
+                        if first == '^' && last == '\$' then  # 
                             { updatedRegex : 
                                 List.dropFirst reg 1
                                 |> List.dropLast 1,
                                 strict : Both }
                         else if first == '^'  then
                             { updatedRegex : List.dropFirst reg 1, strict : Front }
-                        else if last == '$'  then
+                        else if last == '\$'  then
                             { updatedRegex : List.dropLast reg 1, strict : Back } 
                         else
                             { updatedRegex : reg, strict : No }          
@@ -710,7 +710,7 @@ checkMatching = \ utfLst, reg  ->
                             { updatedRegex : reg, strict : No }    
                         
                     (_, Character  last) ->
-                        if last == '$'  then
+                        if last == '\$'  then
                             { updatedRegex : List.dropLast reg 1, strict : Back }
                         else
                             { updatedRegex : reg, strict : No }    

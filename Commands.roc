@@ -112,7 +112,44 @@ andMode = \  parsResult, config ->
             when inConfigResult is 
                 Ok inConfig ->
                     if inConfig.command == Search then
-                        Ok config
+                        #  maybe I am wrong on that but I would expect below to work, it does not
+                        # (
+                        # List.walkTry inConfig.patterns (LogicalAnd [] ) (\ andPattern, pattern ->   
+                        #     LogicalAnd  lst  = andPattern
+                        #     when  pattern is 
+                        #         Allow pat ->  
+                        #             Ok  (LogicalAnd [])
+                        #         _ -> Err "color cannot be used in and construction"
+                        # ))
+                        # |> (\ andPatternResult ->
+                        #     when andPatternResult  is 
+                        #         Ok andPattern ->
+                        #             Ok {config & patterns : [andPattern]}
+                        #         Err message -> Err message   
+                        # )
+                    
+                        (
+                        List.walkTry inConfig.patterns [] (\ andLst, pattern ->   
+                            when  pattern is 
+                                Allow pat ->  
+                                   Ok (List.append andLst (Allow pat))
+                                Blacklist pat -> 
+                                    Ok  (List.append andLst (Blacklist pat))
+                                Regex (Allow pat) ->
+                                    Ok  (List.append andLst (Regex (Allow pat)))
+                                Regex (Blacklist pat) -> 
+                                    Ok (List.append andLst (Regex (Blacklist pat)))
+                                _ -> Err "color cannot be used in and construction"
+                        ))
+                        |> (\ andPatternResult ->
+                            when andPatternResult  is 
+                                Ok lst ->
+                                    if config.command == None then
+                                        Ok {config & patterns : List.append config.patterns (LogicalAnd lst), command : Search}
+                                    else
+                                        Ok {config & patterns : List.append config.patterns (LogicalAnd lst)}
+                                Err message -> Err message   
+                        )
                     else 
                         Err "Error in parsing and@ command"
                 Err _ ->  Err "Error in parsing and@ command"
@@ -255,7 +292,7 @@ modifierAnalysis = \ word, inState ->
                                         Ok handler ->
                                             modifiedConfResult = handler parsed config
                                             when modifiedConfResult is
-                                                Ok modifiedConf -> Continue (modifierAnalysis (Utils.utfToStr parsed.left) modifiedConf)
+                                                Ok modifiedConf -> Break (modifierAnalysis (Utils.utfToStr parsed.left) modifiedConf)
                                                 Err _ -> Break (Err "internal application error, during comand \(word) analysis")
                                         Err _ -> 
                                             Break (Err "internal application error, during comand \(word) analysis")
@@ -274,7 +311,7 @@ commandsToHandlers =
     #|> Dict.insert "dsdsa" (\ type, config -> andMode type, config )  # those lines create cycles I am not sure they should be  
     #|> Dict.insert "dsdsa"  andMode 
     |> Dict.insert "([Rr])?@(.+)->([Rr])?@(.+)" createPatternToPattern
-    |> Dict.insert "^(\\d+|s)->(\\d+|e)@$" createLineToLine
+    |> Dict.insert "^(\\d+|s)->(\\d+|e)@\$" createLineToLine
     |> Dict.insert "(([^@]+@)?(.*))" handleOthers
     
 simplifiedSyntax : Dict Str Str
@@ -301,19 +338,32 @@ commandAnalysis = \ word, inConfig ->
 
 recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \filterStr ->
-    List.walkTry filterStr (State.createConfig [] Search (Set.empty {}) [] ) (\ config, word ->
-        when Regex.parseStrMagic word "^[Aa][Nn][Dd]@(.+)$" config.regexMagic is
+    andEvaluatedResult = 
+        Str.joinWith  filterStr " "
+        |> evalAndCommand (State.createConfig [] Search (Set.empty {}) [] ) ""
+        
+    evalAndCommand : Str, ConfigType, Str -> Result ( ConfigType, Str ) Str
+    evalAndCommand =  \ inCommand, config, left -> 
+        when Regex.parseStrMagic inCommand "^[Aa][Nn][Dd]@\\((.+)\\)\$" config.regexMagic is
             Ok parsed -> 
                 if parsed.matchFound == Bool.true then
-                    andMode parsed config
+                    when andMode parsed config is
+                        Ok updatedConfig ->  
+                            evalAndCommand (Utils.utfToStr parsed.left) updatedConfig ( Str.concat left (Utils.utfToStr parsed.missed) )
+                        Err message -> Err message 
                 else
-                    when commandAnalysis word config is 
-                        Ok updatedConfig -> 
-                            Ok updatedConfig
-                        Err message ->  Err message
-                        
-            Err message -> Err message
-        ) 
+                    Ok (config, Str.concat inCommand left)                    
+            Err message -> Err message 
+
+    when andEvaluatedResult is 
+        Ok andEvaluated -> 
+
+            List.walkTry (Utils.tokenize andEvaluated.1) (andEvaluated.0) (\ config, word ->
+                when commandAnalysis word config is 
+                    Ok updatedConfig ->  Ok updatedConfig
+                    Err message ->  Err message
+                )
+        Err message -> Err message
 
 replaceTilde : StateType, Str  -> Str
 replaceTilde = \state, str -> 
@@ -351,7 +401,7 @@ handleUserCommand = \ state, commandPatRaw ->
             List.walkUntil comLst (Ok []) ( \ lstRes, command ->
                 when  lstRes is
                     Ok lst ->
-                        when Regex.parseStrMagic command "^fc@(.+)$" magic is 
+                        when Regex.parseStrMagic command "^fc@(.+)\$" magic is 
                             Ok parsed ->
                                 if parsed.matchFound == Bool.true then
                                     #when Regex.getValue [0] 0 parsed.captured,is   #  accidental ',' crashes compiler
