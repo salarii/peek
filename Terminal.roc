@@ -167,7 +167,7 @@ displayCommand = \ appState, command ->
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- Stdout.write "Command executed: " |> Task.await
         {} <- Stdout.write command |> Task.await
-        {} <- Stdout.write "\n\n" |> Task.await
+        {} <- Stdout.write "\n\n\n\r" |> Task.await
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- print |> Task.await
         {} <- Stdout.write clearLinePat |> Task.await

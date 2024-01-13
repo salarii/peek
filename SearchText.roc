@@ -8,13 +8,13 @@ interface  SearchText
 # some operations will be slow : ) so it will be up to user to decide which one
 # to use in given circumstances
 
-LineSearchResultType : [ Hit PatternType, Miss ]
+LineSearchResultType : [ Hit (Set PatternType), Miss ]
 
 LineInput : {number : U32, line : Str }
 
 LineAnalyzedType : { content : List  Str, separator : List  Str }
 
-LineProcessedType : { number : U32 , line : LineAnalyzedType, content : Str, status : LineSearchResultType, color : Set PatternType }
+LineProcessedType : { number : U32 , line : LineAnalyzedType, content : Str, status : LineSearchResultType}
 
 mergeLineProcessed : List LineProcessedType, List LineProcessedType, Set PatternType -> List LineProcessedType
 mergeLineProcessed = \ leftLst, rightLst, keep ->
@@ -34,27 +34,24 @@ mergeLineProcessed = \ leftLst, rightLst, keep ->
             else 
                 when List.last state.1 is 
                     Ok last ->
-                        when line.status is 
-                            Hit pattern ->
-                                if Set.contains keep pattern == Bool.true then
-                                    when last.status is
-                                        Hit lastPat ->
-                                            (state.0, Utils.modifyLastInList state.1 { last & status : line.status, color: Set.insert last.color (convertToColor lastPat) })
-                                        Miss ->  (state.0, Utils.modifyLastInList state.1 { last & status : line.status })
-                                else 
-                                    state
-                            Miss -> 
-                                state 
-
+                        (state.0, Utils.modifyLastInList state.1 { last & status : mergeStatus last.status line.status })
                     _ -> state
             )
     merged.1
 
 coloring : List LineProcessedType, ConfigType -> Result (List LineProcessedType ) Str
 coloring = \ lines, config ->
+    gatherColors = 
+        List.walk config.patterns (Set.empty {}) (\state,  pattern -> 
+            when pattern is 
+                Regex (Color _) | (Color _)->
+                    Set.insert state pattern
+                _ -> 
+                    state ) 
+
     colored =
         List.map  lines (\ line->
-            Set.walk line.color (Ok line) (\ stateResult, pattern ->
+            Set.walk gatherColors (Ok line) (\ stateResult, pattern ->
                 when stateResult is 
                     Ok state ->
                         when searchPattern line.content pattern config is 
@@ -79,7 +76,7 @@ coloring = \ lines, config ->
             Ok (List.map colored (\ lineColRes ->
                 when lineColRes is 
                    Ok coloredLine -> coloredLine
-                   Err _ -> { number : 0, line : { content : [], separator : [] }, content : "", status : Miss, color : Set.empty {} }
+                   Err _ -> { number : 0, line : { content : [], separator : [] }, content : "", status : Miss }
                 )
             ))  
        
@@ -171,21 +168,21 @@ evalSearch = \ content, config ->
                         Err message -> { terminal: message, raw : "" }
                         )
             FromPatternToPattern fromPat toPat ->
-                patternsProcessed =
+                patternsProcessedResult =
                     List.walkTry lineNembersAdded.0 [] (\ register, line->
                         analyseLine line config.patterns register matchAll config
                     )
-                rangesProcessed =
+                rangesProcessedResult =
                     List.walkTry lineNembersAdded.0 [] (\ register, line->
                         analyseLine line [fromPat, toPat] register Bool.false config
                     )
-                when (patternsProcessed, rangesProcessed )  is 
-                    (Ok patterns, Ok ranges ) ->
-                        mergeLineProcessed patterns ranges (Set.fromList [fromPat, toPat])
+                when (patternsProcessedResult, rangesProcessedResult )  is 
+                    (Ok patternsProcessed, Ok ranges ) ->
+                        mergeLineProcessed patternsProcessed ranges (Set.fromList [fromPat, toPat])
                         |> List.walk (Block,[],[]) (\state, line ->
                             when line.status is 
-                                Hit pattern -> 
-                                    if pattern == fromPat then
+                                Hit patterns -> 
+                                    if Set.contains patterns fromPat == Bool.true then
                                         if state.0 == Allow then
                                             when List.first state.1 is 
                                                 Ok head -> 
@@ -193,7 +190,7 @@ evalSearch = \ content, config ->
                                                 Err _ -> state
                                         else 
                                             (Allow,[line],state.2)
-                                    else if pattern == toPat  then
+                                    else if Set.contains patterns toPat == Bool.true then
                                         if state.0 == Allow then
                                             (Block,[],List.append state.2 (List.append state.1 line))
                                         else 
@@ -241,19 +238,20 @@ evalSearch = \ content, config ->
                                 
                     (Err message , _ ) ->  { terminal: message, raw : "" }
                     (Ok _, Err message ) -> { terminal: message, raw : "" }
-            SearchSection section ->        
+            SearchSection sectionsLst ->        
                 patternsProcessed =
                     List.walkTry lineNembersAdded.0 [] (\ register, line->
                         analyseLine line config.patterns register matchAll config
                     )
+                gatherPatterns = List.walk sectionsLst [] (\ lst, section -> List.append lst section.pattern )
                 hotProcessed =
                     List.walkTry lineNembersAdded.0  [] (\ register, line->
-                            analyseLine line [section.pattern] register Bool.false config
+                            analyseLine line gatherPatterns register Bool.false config
                     )
                 when (patternsProcessed, hotProcessed )  is 
                     (Ok patterns, Ok hot ) ->
-                        merged = mergeLineProcessed patterns hot (Set.fromList [section.pattern])
-                        sections = filterSections merged [section]
+                        merged = mergeLineProcessed patterns hot (Set.fromList gatherPatterns)
+                        sections = filterSections merged sectionsLst
 
                         List.walkTry sections "" (\ totalOut, sec -> 
                                 when coloring sec config is
@@ -289,34 +287,28 @@ evalSearch = \ content, config ->
                     (Ok _, Err message ) -> { terminal: message, raw : "" }        
             _ -> { terminal: "not supported yet", raw : "" }
 
-convertToColor : PatternType -> PatternType 
-convertToColor = \ pattern -> 
-    when pattern is 
-        Regex type ->
-            when type is
-                Allow pat ->
-                    Regex (Color pat )
-                _ -> pattern 
-        Allow pat ->
-            Color pat
-        _-> pattern
-
-
-#DecomposePatternsType : {allow : Set.empty {}, block : Set.empty {}, color : Set.empty {} }
 decomposeEmpty : 
     {
         allow : Set PatternType, 
         block : Set PatternType,
         andDecomposed : List { pattern: PatternType, decomposed : (Set PatternType, Set PatternType)},
-        color : Set PatternType
     }
 decomposeEmpty = 
     {
         allow : Set.empty {},
         block : Set.empty {},
         andDecomposed : [],
-        color : Set.empty {},
     }
+
+mergeStatus : LineSearchResultType, LineSearchResultType -> LineSearchResultType
+mergeStatus = \ leftStatus, rightStatus ->
+    when (leftStatus, rightStatus) is 
+        (Hit patLstLast, Hit patLstLine) ->
+            Hit ( Set.union  patLstLast patLstLine)
+        (Hit _, Miss) | (Miss, Miss) ->
+            leftStatus
+        (Miss, Hit _) ->
+            rightStatus              
 
 # ConfigType walkaround here
 analyseLine : LineInput, List PatternType, List LineProcessedType, Bool, ConfigType -> Result (List LineProcessedType) Str   
@@ -327,20 +319,20 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                 Regex type ->
                     when type is
                         Allow pat ->
-                            { state &  allow : Set.insert state.allow pattern, color : Set.insert state.color (convertToColor pattern ) }
+                            { state &  allow : Set.insert state.allow pattern }
                         Blacklist pat -> 
                             { state &  block : Set.insert state.block pattern }
-                        Color pat -> 
-                            { state &  color : Set.insert state.color pattern }
+                        _-> 
+                            state
 
                 Allow pat ->
                     #  I made mistake as below and this caused compiler to hang during build : )
-                    # { state &  allow : Set.insert state.allow pattern, color : Set.insert state.color (Color pattern) }  
-                    { state &  allow : Set.insert state.allow pattern, color : Set.insert state.color (convertToColor pattern ) }
+                    # { state &  allow : Set.insert state.allow pattern}  
+                    { state &  allow : Set.insert state.allow pattern }
                 Blacklist pat -> 
                     { state &  block : Set.insert state.block pattern }
-                Color pat -> 
-                    { state &  color : Set.insert state.color pattern }
+                _ -> 
+                    state
                 LogicalAnd  patternLst ->
                     List.walk patternLst (Set.empty {},Set.empty {}) ( \ inState, andPattern -> 
                         when  andPattern is 
@@ -356,10 +348,10 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                     |> (\ andSet -> 
                         { state &
                             andDecomposed : List.append state.andDecomposed {pattern: LogicalAnd  patternLst, decomposed : andSet},
-                            color : Set.union  state.color (Set.map andSet.0 (\ allPat ->convertToColor allPat) ) } )
+                        } )
                 _-> state
                 )
-    miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, content: lineData.line,status : Miss, color : sortPatterns.color }
+    miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, content: lineData.line,status : Miss }
     allowStageResult = 
         if (Set.isEmpty sortPatterns.allow == Bool.false ||
             List.isEmpty sortPatterns.andDecomposed == Bool.false) then
@@ -372,7 +364,7 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                                     when searchPattern lineData.line pattern config is 
                                         Ok searchResult -> 
                                             if searchResult.status != Miss then
-                                                Continue ( Ok { searchState & line : searchResult.line, status : searchResult.status})
+                                                Continue ( Ok { searchState & line : mergeColors [searchState.line, searchResult.line], status : mergeStatus searchState.status searchResult.status})
                                             else
                                                 Break ( Ok  miss )
                                         Err message -> Break (Err message)
@@ -400,7 +392,7 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                                                 when blockResult is 
                                                     Ok block -> 
                                                         if block.status == Miss then
-                                                            Break (Ok {state &  status : Hit (andSet.pattern)})           
+                                                            Break (Ok {state &  status : Hit (Set.empty {} |> Set.insert andSet.pattern)})           
                                                         else 
                                                             Continue  (Ok state)     
                                                     Err message -> Break (Err message)
@@ -423,9 +415,9 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                                             when searchPattern lineData.line pattern config is 
                                                 Ok searchResult -> 
                                                     if searchResult.status != Miss then
-                                                        Break ( Ok { state & line : searchResult.line, status : searchResult.status, color : Set.remove state.color (convertToColor pattern)})
+                                                        Continue ( Ok { state & line : mergeColors [state.line, searchResult.line], status : mergeStatus state.status searchResult.status})
                                                     else
-                                                        Continue ( Ok { state &  color :  Set.remove state.color (convertToColor pattern)})
+                                                        Continue ( Ok state )
                                                 Err message -> Break (Err message)
                                         Err message -> Break (Err message)
                                     )
@@ -475,7 +467,7 @@ searchPattern = \ line, pattern, config ->
                         Ok searched -> 
                             if List.isEmpty searched.separator == Bool.false then
                                 if List.len searched.separator + 1 == List.len searched.content then
-                                    Ok  { line : searched, status : Hit pattern}
+                                    Ok  { line : searched, status : Hit (Set.empty {} |> Set.insert pattern) }
                                 else
                                     Err "problem during search \(pat)"
                             else
@@ -485,7 +477,7 @@ searchPattern = \ line, pattern, config ->
         Allow pat | Color pat | Blacklist pat -> 
             searched = plainWordMatch line pat 
             if List.isEmpty searched.separator == Bool.false then
-                Ok { line : searched, status : Hit pattern}
+                Ok { line : searched, status : Hit (Set.empty {} |> Set.insert pattern)}
             else
                 Ok { line : searched, status : Miss }
         _ -> Err ("unknown problem during search")
@@ -627,17 +619,23 @@ filterSections = \ lines, sections  ->
     
         evalIfHit : LineProcessedType -> (Bool, Nat, Nat)
         evalIfHit = \ line -> 
+            getLonger : Nat, Nat -> Nat
+            getLonger = \ left, right ->
+                if  left >  right then
+                    left
+                else
+                    right 
             List.walkUntil sections  (Bool.false, 0, 0) (\ state, section->
                 when  line.status is 
-                    Hit  pattern -> 
-                        if section.pattern == pattern then 
-                            Break (Bool.true , section.before, section.after ) 
+                    Hit  patterns -> 
+                        if Set.contains patterns section.pattern == Bool.true then 
+                             Continue (Bool.true , getLonger state.1 section.before, getLonger state.2 section.after ) 
                         else 
                             Continue state
                     Miss -> Continue state 
                 )
     
-        nextLineParse : (Nat, List LineProcessedType,List (List LineProcessedType)), LineProcessedType -> (Nat, List LineProcessedType,List (List LineProcessedType))
+        nextLineParse : {cnt : Nat,buffer : List LineProcessedType, outBuffers: List (List LineProcessedType)}, LineProcessedType -> {cnt : Nat,buffer : List LineProcessedType, outBuffers: List (List LineProcessedType)}
         nextLineParse = (\  state, line ->
             parsingResult = evalIfHit line 
             if parsingResult.0 == Bool.true  then  
@@ -645,76 +643,56 @@ filterSections = \ lines, sections  ->
                 state
                 |> ( \ stateIn ->
 
-                    if parsingResult.1 > (getSizeLast stateIn.2) then
-                        (
-                            stateIn.0,
-                            stateIn.1,
-                            List.dropLast  stateIn.2 1
-                            |> List.append  ( List.sublist stateIn.1 { start: (longest - parsingResult.1 ), len: parsingResult.1 + 1 } )
-                        )
+                    if parsingResult.1 > (getSizeLast stateIn.outBuffers) then
+                        { stateIn &
+                            outBuffers : 
+                                List.dropLast  stateIn.outBuffers 1
+                                |> List.append  ( List.sublist stateIn.buffer { start: (longest - parsingResult.1 ), len: parsingResult.1 + 1 } )
+                        }
                     else
                         lastExtended = 
-                            when  List.last stateIn.2 is
+                            when  List.last stateIn.outBuffers is
                                     Ok lst -> 
-                                        Utils.modifyLastInList stateIn.2  (List.append lst line)
-                                    Err _ ->  List.append stateIn.2 [line] 
-                        (
-                            stateIn.0,
-                            stateIn.1,
-                            lastExtended
-                        )
+                                        Utils.modifyLastInList stateIn.outBuffers  (List.append lst line)
+                                    Err _ ->  List.append stateIn.outBuffers [line] 
+                        { stateIn & outBuffers : lastExtended }
+                        
                 )
                 |> ( \ modState ->     
-                        if parsingResult.2 >= modState.0  then
-                            (parsingResult.2, modState.1, modState.2)
+                        if parsingResult.2 >= modState.cnt  then
+                            { modState & cnt : parsingResult.2 }
                         else
-                            (modState.0 - 1, modState.1, modState.2))
+                            { modState & cnt : modState.cnt - 1 } )
             else 
                 updatedBuffer =
-                    when  List.last state.2 is
+                    when  List.last state.outBuffers is
                                 Ok lst -> 
-                                    Utils.modifyLastInList state.2  (List.append lst line)
-                                Err _ ->  List.append state.2 [line]
-                if state.0 > 0 then
-                    (
-                        state.0 - 1,
-                        state.1,
-                        updatedBuffer
-                    )
+                                    Utils.modifyLastInList state.outBuffers  (List.append lst line)
+                                Err _ ->  List.append state.outBuffers [line]
+                if state.cnt > 0 then
+                    { state & cnt : state.cnt - 1, outBuffers : updatedBuffer }
                 else
-                    when  List.last state.2 is
+                    when  List.last state.outBuffers is
                         Ok lst -> 
                             if List.len lst > 0 then
-                                (
-                                    state.0,
-                                    state.1,
-                                    List.append state.2  []
-                                )
+                                { state &  outBuffers : List.append state.outBuffers  [] }
                             else
                                 state
                         Err _ -> state )
                     
         analysysDone = 
-            List.walk lines (0, [], [])#(Nat, List LineProcessedType, List List LineProcessedType)
+            List.walk lines {cnt : 0,buffer : [], outBuffers : []}
                 (\ state , line ->
                     state 
                     |> ( \ inState ->
-                        if List.len inState.1 <= longest then
-                            (
-                                state.0,
-                                List.append inState.1 line,
-                                state.2
-                            )
+                        if List.len inState.buffer <= longest then
+                            { inState & buffer : List.append inState.buffer line}
                         else
-                            (
-                                state.0,
-                                (
-                                    List.dropFirst inState.1 1
-                                    |> List.append  line
-                                ),
-                                state.2
-                            ))
+                            { inState &
+                                 buffer : 
+                                    List.dropFirst inState.buffer 1
+                                    |> List.append  line })
                     |> nextLineParse line 
                 )
-        List.dropIf analysysDone.2 (\lst -> List.isEmpty lst)
+        List.dropIf analysysDone.outBuffers (\lst -> List.isEmpty lst)
   

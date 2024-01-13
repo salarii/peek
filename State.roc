@@ -44,7 +44,7 @@ SectionType : {before: Nat, after:  Nat, pattern : PatternType}
 CommandType : [
     None,
     Search,
-    SearchSection SectionType,
+    SearchSection (List SectionType),
     FromPatternToPattern PatternType PatternType,
     ]
 

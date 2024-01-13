@@ -39,8 +39,11 @@ regex = \  parsResult, config ->
             Ok { config & patterns : [Regex (Color pat) ] }
         (Search, [Blacklist pat]) -> 
             Ok { config & patterns : [Regex (Blacklist pat) ] }
-        (SearchSection {before: head, after : tail, pattern : (Allow pat)}, []) ->
-            Ok { config & command: SearchSection {before:  head , after:  tail, pattern : (Regex (Allow pat) ) }}
+        (SearchSection patternLst, _) ->
+            when patternLst is 
+                [.., {before: head, after : tail, pattern : (Allow pat)}] ->
+                    Ok { config & command: SearchSection (Utils.modifyLastInList  patternLst {before:  head , after:  tail, pattern : (Regex (Allow pat) ) } )}
+                _ -> Err "section error"
         _ -> Ok config
 
 createSection : ParsingResultType, ConfigType -> Result ConfigType Str
@@ -61,10 +64,10 @@ createSection = \  parsResult, config ->
                                                 config &
                                                 command:
                                                     SearchSection
-                                                        {
+                                                        [{
                                                         before: (Utils.asciiArrayToNumber arg1 Str.toNat),
                                                         after: (Utils.asciiArrayToNumber arg1 Str.toNat),  
-                                                        pattern: pattern},
+                                                        pattern: pattern}],
                                                 modifiers : Set.empty {},
                                                 patterns : [], 
                                                 }
@@ -73,10 +76,10 @@ createSection = \  parsResult, config ->
                                                 config &
                                                 command:
                                                     SearchSection
-                                                        {
+                                                        [{
                                                         before: (Utils.asciiArrayToNumber arg1 Str.toNat),
                                                         after: 0,
-                                                        pattern : pattern},
+                                                        pattern : pattern}],
                                                 modifiers : Set.empty {},
                                                 patterns : [], 
                                                 }
@@ -85,10 +88,10 @@ createSection = \  parsResult, config ->
                                                 config &
                                                 command:
                                                     SearchSection
-                                                        {
+                                                        [{
                                                         before : 0,
                                                         after: (Utils.asciiArrayToNumber arg1 Str.toNat),
-                                                        pattern : pattern},
+                                                        pattern : pattern}],
                                                 modifiers : Set.empty {},
                                                 patterns : [], 
                                                 }
@@ -200,11 +203,12 @@ createLineToLine = \  parsResult, config ->
 mergeConfigs : ConfigType, ConfigType  -> ConfigType
 mergeConfigs = \configDest, newConfig ->
     updateCommand  = 
-        if configDest.command == None ||
-           (configDest.command == Search && newConfig.command != None ) then
-            newConfig.command
-        else 
-            configDest.command 
+        when (configDest.command, newConfig.command ) is 
+            (_,None) -> configDest.command
+            (None, _ ) | (Search,_)-> newConfig.command
+            (SearchSection sectionDest, SearchSection sectionNew) -> 
+                SearchSection (List.concat sectionDest sectionNew)
+            _ -> configDest.command
             
     mergedlimit = List.concat  configDest.limit newConfig.limit   
 
