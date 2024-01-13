@@ -24,7 +24,8 @@ app "peek"
 mainLoop : StateType -> Task [Step StateType,Done {} ] * 
 mainLoop = \ state  -> 
     _ <- Sleep.millis 50 |> Task.attempt
-    termstate <- Terminal.step state |> Task.await
+    stateDrawn<- Terminal.drawState state |> Task.await
+    termstate <- Terminal.step stateDrawn |> Task.await
     if State.getAppMode termstate == Quitting then
         Task.ok (Done {})
     else 

@@ -1,5 +1,5 @@
 interface  Terminal
-    exposes [step,init,setCursor,displayCommand]
+    exposes [step,init,setCursor,displayCommand, drawState]
     imports [
         pf.Stdout,
         pf.Stdin,
@@ -14,6 +14,7 @@ interface  Terminal
         Commands.{quitCommand},
         State.{StateType,TerminalLineStateType}
     ]
+# While the cursor handling could be improved, it is not a critical issue at this time.   
 initPhrase : List U8
 initPhrase = Str.toUtf8 ""
 
@@ -48,7 +49,7 @@ addToHistoryListNoAlter = \ historyLst, newItem ->
         historyLst
 
 injectString : List U8, List U8, I32 -> {composed : List U8,inJectedCnt : I32 } 
-injectString =  \ destStr, inStr, n -> 
+injectString =  \ destStr, inStr, n ->
     List.split destStr (Num.toNat n)
     |> (\ splited ->
         composed = 
@@ -118,32 +119,48 @@ guessPath = \ appState ->
                     Result.withDefault listedTop []
                     |> listDir ) 
 
+adjustCursorPos : {row : I32, col: I32}, I32 -> {row : I32, col: I32} 
+adjustCursorPos = \  position, lineCnt ->
+    {
+        row: 
+            position.row +
+            (Num.divTrunc (position.col - 1 ) lineCnt),
+        col :
+            (Num.rem (position.col ) lineCnt)
+            |> (\ updated ->
+                if updated == 0 then
+                    lineCnt
+                else
+                    updated)
+    }
 
 init : StateType -> Task StateType *
 init = \ appState -> 
     {} <- Tty.enableRawMode |> Task.await
-    {} <- Stdout.write clearLinePat |> Task.await 
-    {} <- Stdout.write homeLinePat |> Task.await
-    {} <- Stdout.write (Utils.utfToStr (State.getTerminalState appState).prompt) |> Task.await
-    State.setTerminalHistory appState (State.getCommandHistory appState).sys
-    |> setCursor 
-    
+    {} <- Stdout.write clearLinePat |> Task.await
+    {} <- Stdout.write endLinePat |> Task.await
+    {} <- Stdout.write bottomLinePat |> Task.await
+    state =  State.getTerminalState appState
+    cursorPositionRes <- queryPosition "" |> Task.attempt 
+    when cursorPositionRes is 
+    Ok cursor ->
+        updateLineSizeState = State.setTerminalState appState {state & windowSize: cursor.row, lineSize : cursor.col }
+        {} <- Stdout.write homeLinePat |> Task.await
+        {} <- Stdout.write (Utils.utfToStr state.prompt) |> Task.await
+        State.setTerminalHistory updateLineSizeState (State.getCommandHistory appState ).sys
+        |> setCursor 
+                    
+    Err _ -> Task.ok appState
 
 setCursor : StateType -> Task StateType *
 setCursor = \ appState ->
     state =  State.getTerminalState appState
-    setupTerminal =
-        {} <- Stdout.write  queryScreenPositionPat |> Task.await
-        Stdin.bytes
-    positionResult <- setupTerminal |> Task.attempt
-    when positionResult is
-        Ok position ->
-            cursorPositionRes = queryPosition position 
-            when cursorPositionRes is 
-                Ok cursor ->
-                    Task.ok (State.setTerminalState appState {state & cursor : cursor} )
-                Err _ -> Task.ok appState
-        Err _ -> Task.ok appState
+    cursorPositionRes <- queryPosition "" |> Task.attempt
+    when cursorPositionRes is 
+    Ok cursor ->
+        Task.ok (State.setTerminalState appState {state & cursor : cursor} )
+    Err _ -> Task.ok appState
+    
 
 displayCommand :StateType, Str-> Task StateType *
 displayCommand = \ appState, command ->
@@ -182,15 +199,65 @@ displayCommand = \ appState, command ->
         cursorUpdated <-setCursor appState |> Task.await
         Task.ok cursorUpdated
 
+drawState : StateType-> Task StateType *
+drawState = \ appState ->
+    clearLines : I32, I32 -> Task {} *
+    clearLines = \ from, to ->
+        # crashes for some reason
+        # if from < to then
+        #     Task.ok {}
+        # else
+        #     {} <- Stdout.write (cursorPosition {row: row, col: 1}) |> Task.await
+        #     {} <- Stdout.write clearLinePat |> Task.await
+        #     {} <- Stdout.write homeLinePat |> Task.await
+        #     clearLines  (from - 1) to  
+        List.walk (List.range { start: At to, end: At from }) (Task.ok {} )( \task, row-> 
+            {} <- Stdout.write (cursorPosition {row: row, col: 1}) |> Task.await
+            {} <- Stdout.write clearLinePat |> Task.await
+            Stdout.write homeLinePat    
+            # when I use like below it crashes
+            #{} <- Stdout.write homeLinePat |> Task.await
+            #task
+        ) 
+    
+    determineSpan : TerminalLineStateType -> (Bool, I32, I32) 
+    determineSpan = \ terminal ->
+        endRow = terminal.cursor.row + (Num.divTrunc (terminal.cursor.col - 1) terminal.lineSize)
+        if endRow > terminal.windowSize then
+            (Bool.true,terminal.cursor.row - 1, endRow - 1)
+        else                 
+            (Bool.false,terminal.cursor.row, endRow)
+    
+    pushLine : TerminalLineStateType -> Task {} *
+    pushLine = \ terminal ->
+        {} <- Stdout.write bottomLinePat |> Task.await
+        {} <- Stdout.write endLinePat |> Task.await 
+        Stdout.write "   " 
+
+    state =  State.getTerminalState appState    
+    span = determineSpan state
+    updatedRow =  {
+         state & 
+         cursor : { row : span.1, col : state.cursor.col },
+    }
+              
+    if span.0 then
+        _ <- pushLine updatedRow |> Task.await
+        _ <- clearLines span.1 span.2 |> Task.await
+        _ <- drawStateInternal updatedRow |> Task.attempt
+        Task.ok (State.setTerminalState appState updatedRow )
+    else 
+        _ <- clearLines span.1 span.2 |> Task.await
+        _ <- drawStateInternal updatedRow |> Task.attempt
+        Task.ok (State.setTerminalState appState updatedRow )
+
 step : StateType-> Task StateType *
 step = \ appState ->
     state =  State.getTerminalState appState
     promptSize = (getPromptSize state)
-    updateInputTask = 
-        {} <- drawState state |> Task.await
-        Stdin.bytes
-
-    inputResult <- updateInputTask |> Task.attempt     
+ 
+    inputResult <- Stdin.bytes |> Task.attempt
+  
     when inputResult is 
         Ok input ->  
             command = parseRawStdin input
@@ -333,8 +400,7 @@ modifyLine = \state, operation ->
     promptSize = (getPromptSize state)
     when operation is 
         Characters chars ->
-
-            injected = injectString state.content chars (state.cursor.col-1 - promptSize) 
+            injected = injectString state.content (Str.toUtf8 (Utils.utfToStr chars)) (state.cursor.col-1 - promptSize) 
             { state & 
                 content: injected.composed
             }
@@ -347,29 +413,35 @@ modifyLine = \state, operation ->
             |> modifyCursor (Left 1) 
 
 
-drawState : TerminalLineStateType -> Task {} *
-drawState = \state ->
-    {} <- Stdout.write clearLinePat |> Task.await
-    {} <- Stdout.write homeLinePat |> Task.await
+drawStateInternal : TerminalLineStateType -> Task {} *
+drawStateInternal = \state ->
     {} <- Stdout.write (Utils.utfToStr state.prompt) |> Task.await
     {} <- Stdout.write (Result.withDefault (Str.fromUtf8 state.content ) "") |> Task.await
-    Stdout.write (cursorPosition state.cursor)
+    Stdout.write (cursorPosition (adjustCursorPos  state.cursor state.lineSize ))
 
-queryPosition : List U8 -> Result { row : I32, col : I32 }  Str
-queryPosition = \ consoleOut ->
-    position = Result.withDefault (Str.fromUtf8 (List.dropFirst consoleOut 1)) "" 
-    when Regex.parseStr position "(\\d+);(\\d+)R"  is
-        Ok parsed ->
-            when ((Regex.getValue [0] 0 parsed.captured),
-                 (Regex.getValue [1] 0 parsed.captured)) is
-                ( Ok rowStr, Ok colStr  )->
-                    Ok 
-                        {
-                            row : Utils.asciiArrayToNumber rowStr Str.toI32,
-                            col : Utils.asciiArrayToNumber colStr Str.toI32
-                        }
-                _ -> Err "can't parse cursor position"
-        Err  message -> Err message
+
+queryPosition : Str -> Task  { row : I32, col : I32 }  *
+queryPosition = \ _none ->
+    setupTerminal =
+        {} <- Stdout.write  queryScreenPositionPat |> Task.await
+        Stdin.bytes
+    positionResult <- setupTerminal |> Task.attempt
+    when positionResult is
+        Ok consoleOut ->
+            position = Result.withDefault (Str.fromUtf8 (List.dropFirst consoleOut 1)) "" 
+            when Regex.parseStr position "(\\d+);(\\d+)R"  is
+                Ok parsed ->
+                    when ((Regex.getValue [0] 0 parsed.captured),
+                        (Regex.getValue [1] 0 parsed.captured)) is
+                        ( Ok rowStr, Ok colStr  )->
+                            Task.ok 
+                                {
+                                    row : Utils.asciiArrayToNumber rowStr Str.toI32,
+                                    col : Utils.asciiArrayToNumber colStr Str.toI32
+                                }
+                        _ -> Task.ok  { row : 1, col : 1 } 
+                Err  message -> Task.ok  { row : 1, col : 1 } 
+        Err _ -> Task.ok  { row : 1, col : 1 }
 
 Direction : [Left I32, Right I32, Begin, End ]
 
@@ -391,7 +463,8 @@ queryScreenPositionPat = "\u(001b)[6n"
 clearScreenPat = "\u(001b)[2J"
 clearLinePat ="\u(001b)[2K" 
 homeLinePat  = "\u(001b)[0G"
-endLinePat  = "\u(001b)[K"
+endLinePat  = "\u(001b)[300G"
+bottomLinePat  = "\u(001b)[300B"
 
 cursorPosition : {row: I32, col: I32} -> Str 
 cursorPosition = \{row, col} ->

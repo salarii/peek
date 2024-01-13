@@ -6,17 +6,19 @@ app "testRegex"
         pf.Stdout,
         Regex,
     ]
-    provides [main] to pf
+    provides [main] to pf    
 
 main =   
     kk =
         when Regex.parseStr "white" "(u?w(h)i(t)e)" is 
             Ok parsed ->
-                dbg parsed.captured 
+                #dbg parsed.captured 
                 parsed.matchFound == Bool.false
             Err mes -> mes == "test except of matching" 
 
-
+    
+    dbg  calculateNewPos 1  41  40
+    
     Stdout.write  "the goal ofthis unit is to test Regex.roc"
 
 
@@ -513,40 +515,40 @@ expect
         Err mes -> mes == "test start end matching"  
         
 expect        
-    when Regex.parseStr "aabc" "abc$" is 
+    when Regex.parseStr "aabc" "abc\$" is 
         Ok parsed ->
             parsed.matchFound == Bool.true
         Err mes -> mes == "test start end matching"     
         
         
 expect        
-    when Regex.parseStr "ffggabcde" "abc$" is 
+    when Regex.parseStr "ffggabcde" "abc\$" is 
         Ok parsed ->
             parsed.matchFound == Bool.false
         Err mes -> mes == "test start end matching"   
         
 
 expect        
-    when Regex.parseStr "abc" "^abc$" is 
+    when Regex.parseStr "abc" "^abc\$" is 
         Ok parsed ->
             parsed.matchFound == Bool.true
         Err mes -> mes == "test start end matching"  
         
 expect        
-    when Regex.parseStr "aabc" "^abc$" is 
+    when Regex.parseStr "aabc" "^abc\$" is 
         Ok parsed ->
             parsed.matchFound == Bool.false
         Err mes -> mes == "test start end matching"     
         
         
 expect        
-    when Regex.parseStr "abcde" "^abc$" is 
+    when Regex.parseStr "abcde" "^abc\$" is 
         Ok parsed ->
             parsed.matchFound == Bool.false
         Err mes -> mes == "test start end matching"
         
 expect        
-    when Regex.parseStr "ffggabcdeabc" "^abc|abc$" is 
+    when Regex.parseStr "ffggabcdeabc" "^abc|abc\$" is 
         Ok parsed ->
             parsed.matchFound == Bool.true
         Err mes -> mes == "test start end matching"  
@@ -595,7 +597,7 @@ expect
         Err mes -> mes == "bug only at front"  
 
 expect        
-    when Regex.parseStr "nl@" "^[Nn][Ll]@$" is 
+    when Regex.parseStr "nl@" "^[Nn][Ll]@\$" is 
         Ok parsed ->
             parsed.matchFound == Bool.true
         Err mes -> mes == "bug two only sections"  

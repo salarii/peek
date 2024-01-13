@@ -65,6 +65,8 @@ AppModeType : [System, Search, Quitting]
 TerminalLineStateType : {
     commandHistory : HistoryType,
     historyCnt : I32,
+    lineSize : I32,
+    windowSize : I32,
     content : List U8,
     cursor : { row : I32, col : I32 },
     prompt : List U8,
@@ -98,6 +100,8 @@ create = \ initialText ->
     init = {
         commandHistory : [],
         historyCnt : -1,
+        lineSize : 1,
+        windowSize : 1,
         content : Str.toUtf8 initialText,
         cursor: { row: 1, col: 1},
         prompt : [],
