@@ -8,6 +8,7 @@ app "testRegex"
     ]
     provides [main] to pf    
 
+
 main =   
     kk =
         when Regex.parseStr "white  safsssss rgfs" "^\\S+" is 

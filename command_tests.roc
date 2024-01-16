@@ -39,7 +39,7 @@ main =
 expect
     when Commands.recoverConfigFromInput (Utils.tokenize "  white ") is 
         Ok config ->
-            config.patterns == [ Allow "white" ] && 
+            config.patterns == [ Allow (Plain "white") ] && 
             Set.isEmpty config.modifiers == Bool.true  &&  
             config.command == Search     
         Err mes -> mes == "test search pattern"
@@ -47,7 +47,7 @@ expect
 expect
     when Commands.recoverConfigFromInput (Utils.tokenize "  b@white ") is 
         Ok config ->
-            config.patterns == [ Blacklist "white" ] && 
+            config.patterns == [ Blacklist (Plain "white") ] && 
             Set.isEmpty config.modifiers == Bool.true  &&  
             config.command == Search     
         Err mes -> mes == "test search blacklist pattern"
@@ -56,7 +56,7 @@ expect
 expect
     when Commands.recoverConfigFromInput (Utils.tokenize "  bR@^@[6-7]white ") is 
         Ok config ->
-            config.patterns == [ Regex (Blacklist "^@[6-7]white") ] && 
+            config.patterns == [ Blacklist (Regex "^@[6-7]white") ] && 
             Set.isEmpty config.modifiers == Bool.true  &&  
             config.command == Search     
         Err mes -> mes == "test search regex pattern"
@@ -69,7 +69,7 @@ expect
                 Set.empty {}
                 |> Set.insert NumberLines
 
-            config.patterns == [ Allow "white" ] && 
+            config.patterns == [ Allow (Plain "white") ] && 
             config.modifiers == dest &&  
             config.command == Search     
         Err mes -> mes == "test modifier number lines"
@@ -78,7 +78,7 @@ expect
 expect
     when Commands.recoverConfigFromInput (Utils.tokenize "  fsflN@ ")  is 
         Ok config ->
-            config.patterns == [ Allow "fsflN@" ]  &&
+            config.patterns == [ Allow (Plain "fsflN@") ]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
             config.command == Search     
         Err mes -> mes == "test invalid command, empty pattern"
@@ -86,7 +86,7 @@ expect
 expect
     when Commands.recoverConfigFromInput  (Utils.tokenize "  fsflN@tt ") is 
         Ok config ->
-            config.patterns == [ Allow "fsflN@tt" ]  &&
+            config.patterns == [ Allow (Plain "fsflN@tt") ]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
             config.command == Search     
         Err mes -> mes == "test invalid command"
@@ -94,15 +94,15 @@ expect
 expect
     when Commands.recoverConfigFromInput  (Utils.tokenize " r@osa->@kosa white")  is 
         Ok config ->
-            config.patterns == [Allow "white"]  &&
+            config.patterns == [Allow (Plain "white")]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == FromPatternToPattern (Regex (Allow "osa")) (Allow "kosa")     
+            config.command == FromPatternToPattern (Allow (Regex "osa")) (Allow (Plain "kosa"))     
         Err mes -> mes == "test from pattern to pattern"
 
 expect
     when Commands.recoverConfigFromInput  (Utils.tokenize " s->1000@  white") is 
         Ok config ->
-            config.patterns == [Allow "white"]  &&
+            config.patterns == [Allow (Plain "white")]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
             config.limit == [FromLineToLine 1 1000]
         Err mes -> mes == "test from start to 1000 "
@@ -110,7 +110,7 @@ expect
 expect
     when Commands.recoverConfigFromInput  (Utils.tokenize " 100->e@  white")  is 
         Ok config ->
-            config.patterns == [Allow "white"]  &&
+            config.patterns == [Allow (Plain "white")]  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
             config.limit == [FromLineToLine 100 -1]   
         Err mes -> mes == "test from 100 to e "
@@ -120,7 +120,7 @@ expect
         Ok config ->
             config.patterns == []  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == SearchSection [{before : 10,  after : 10, pattern : (Regex (Allow "black[1-9]")) }]
+            config.command == SearchSection [{before : 10,  after : 10, pattern : (Allow ( Regex "black[1-9]")) }]
         Err mes -> mes == "test region "
 
 expect
@@ -128,7 +128,7 @@ expect
         Ok config ->
             config.patterns == []  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == SearchSection [{before : 10, after : 0, pattern:  (Allow "black")}]
+            config.command == SearchSection [{before : 10, after : 0, pattern:  (Allow (Plain "black"))}]
         Err mes -> mes == "test region before "
 
 

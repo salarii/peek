@@ -24,8 +24,6 @@ TreeNodeType : {locked : Bool, children : List I32, value : List U8}
 
 TreeType : { cnt : I32, content : Dict I32  TreeNodeType }
 
-
-
 SerieType : [ AtLeastOne, ZeroOrMore, MNTimes I32 I32, NoMorethan I32, NTimes I32, Once ] 
 
 MetaType :  [Inactive, Active]

@@ -44,7 +44,7 @@ coloring = \ lines, config ->
     gatherColors = 
         List.walk config.patterns (Set.empty {}) (\state,  pattern -> 
             when pattern is 
-                Regex (Color _) | (Color _)->
+                Color _->
                     Set.insert state pattern
                 _ -> 
                     state ) 
@@ -316,15 +316,6 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
     sortPatterns = 
         List.walk patterns decomposeEmpty (\state,  pattern -> 
             when pattern is 
-                Regex type ->
-                    when type is
-                        Allow pat ->
-                            { state &  allow : Set.insert state.allow pattern }
-                        Blacklist pat -> 
-                            { state &  block : Set.insert state.block pattern }
-                        _-> 
-                            state
-
                 Allow pat ->
                     #  I made mistake as below and this caused compiler to hang during build : )
                     # { state &  allow : Set.insert state.allow pattern}  
@@ -340,10 +331,6 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
                                 (Set.insert inState.0 (Allow pat), inState.1)
                             Blacklist pat -> 
                                 (inState.0, Set.insert inState.1 (Blacklist pat))
-                            Regex (Allow pat) ->
-                                (Set.insert inState.0 (Regex  (Allow pat)), inState.1)
-                            Regex (Blacklist pat) -> 
-                                (inState.0, Set.insert inState.1 (Regex (Blacklist pat)))
                         )
                     |> (\ andSet -> 
                         { state &
@@ -460,9 +447,7 @@ analyseLine = \ lineData, patterns, register, matchAll, config ->
 searchPattern : Str, PatternType, ConfigType -> Result { line : LineAnalyzedType, status : LineSearchResultType }  Str
 searchPattern = \ line, pattern, config ->
     when pattern is 
-        Regex inside ->
-            when inside is 
-                Allow pat | Color pat | Blacklist pat -> 
+        Allow (Regex pat) | Color (Regex pat) | Blacklist (Regex pat) -> 
                     when regexWordMatch line pat { content : [], separator : [] } config.regexMagic is 
                         Ok searched -> 
                             if List.isEmpty searched.separator == Bool.false then
@@ -474,7 +459,7 @@ searchPattern = \ line, pattern, config ->
                                Ok  { line : searched, status : Miss }
                         _-> Err ("unknown problem during search")
                     
-        Allow pat | Color pat | Blacklist pat -> 
+        Allow (Plain pat) | Color (Plain pat) | Blacklist (Plain pat) -> 
             searched = plainWordMatch line pat 
             if List.isEmpty searched.separator == Bool.false then
                 Ok { line : searched, status : Hit (Set.empty {} |> Set.insert pattern)}
