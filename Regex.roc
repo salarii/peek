@@ -795,7 +795,8 @@ checkMatching = \ utfLst, reg  ->
         updatedParsResult  =  { parsResult &  matchFound :(checkMatchingValidity parsResult) && parsResult.matchFound  }  
         
         if state.matchFound == Bool.true then
-            if List.len updatedParsResult.matched > List.len state.matched  then 
+            if  updatedParsResult.matchFound == Bool.true &&
+                List.len updatedParsResult.matched > List.len state.matched  then 
                 updatedParsResult
             else 
                 state

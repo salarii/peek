@@ -10,14 +10,14 @@ app "testRegex"
 
 main =   
     kk =
-        when Regex.parseStr "white" "(u?w(h)i(t)e)" is 
+        when Regex.parseStr "white  safsssss rgfs" "^\\S+" is 
             Ok parsed ->
                 #dbg parsed.captured 
-                parsed.matchFound == Bool.false
+                dbg  parsed.matchFound
+                parsed.matchFound == Bool.true
             Err mes -> mes == "test except of matching" 
-
     
-    dbg  calculateNewPos 1  41  40
+    
     
     Stdout.write  "the goal ofthis unit is to test Regex.roc"
 
@@ -607,3 +607,9 @@ when Regex.parseStr "white" "((u)?white)" is
             Ok parsed ->
                 parsed.matchFound == Bool.true
             Err mes -> mes == "bug optional on nested sequence" 
+  
+expect          
+when Regex.parseStr "white  safsssss rgfs" "^\\S+" is 
+            Ok parsed ->
+                parsed.matchFound == Bool.true
+            Err mes -> mes == "test except of matching" 

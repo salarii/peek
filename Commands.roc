@@ -62,6 +62,7 @@ insertTag = \ _parsed, miniParserData, operation ->
         ParserConfig configType -> 
             when Dict.get configType.exclusive operation is 
                 Ok exclusiveLst -> 
+                   
                     List.walkUntil exclusiveLst Bool.false (\ status, tag -> 
                         if Set.contains configType.options tag == Bool.true then
                             Break Bool.true
@@ -74,7 +75,7 @@ insertTag = \ _parsed, miniParserData, operation ->
                         else
                             Continue (ParserConfig {configType & options : Set.insert configType.options operation })
                         )
-                Err _ -> Error 
+                Err _ -> Continue (ParserConfig {configType & options : Set.insert configType.options operation })
         _ -> Error
     
 colorHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
@@ -117,8 +118,12 @@ simpleHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeTyp
 simpleHandler = \ parsed, miniParserData -> 
     when Regex.getValue [0] 0 parsed.captured is 
         Ok pattern ->
-            Ok ( Continue (Simple ( Utils.utfToStr pattern )) )
+            Ok ( Completed (Simple ( Utils.utfToStr pattern )) )
         _-> Err "error duing command parsing " 
+
+closeANDHandlers =
+    Dict.empty {}
+    |> Dict.insert "^\\)" conditionHit  
 
 configData =
     {
@@ -139,52 +144,79 @@ conditionHit = \ parsed, data ->
 
 evaluate : MiniParserDataType, ParserType -> Result ParserType Str
 evaluate = \ data, parser ->
+
     when data is 
-        Simple simpleData -> Ok parser
+        Simple simpleData ->
+            when parser.data.queue is 
+                [AndPattern, ..] ->
+                    updatedQueue = 
+                        parser.data.queue
+                        |> List.dropFirst 1
+                        |> List.prepend EndAnd
+                        
+                    when parser.data.content is
+                        [] ->  
+                            Err  "unknown problem with command processing" 
+                        [.. as head, last] ->
+                            elems = List.append head { last & pattern : simpleData }
+                            Ok
+                                { parser &
+                                    current : { handlers: closeANDHandlers, data : Condition Bool.false, left : "" },
+                                    data : { queue : updatedQueue, content : elems } }
+                _ -> 
+                    Err "not implemented" 
         ParserConfig configDataProcessed ->
+            updatedQueue = 
+                parser.data.queue
+                |> List.dropFirst 1
+                |> List.prepend AndPattern
+            content = List.append parser.data.content { config: Set.empty {}, pattern : "" }
             if Set.isEmpty configDataProcessed.options then
-                Err "unknown problem with command processing"    
+                when parser.data.queue is 
+                    [AndConfig, ..] -> 
+                        Ok  
+                            { parser &
+                                current : { handlers: simpleHandlers, data : Simple  "", left : "" },
+                                data : { queue : updatedQueue, content : content} } 
+                    _ -> 
+                        Err "unknown problem with command processing"    
             else
-                updatedQueue = 
-                    parser.data.queue
-                    |> List.dropFirst 1
                 #  remember to fix queue
-                
                 updateParser : ParserType, OperationType -> ParserType
                 updateParser = \ inParser, operation ->
-                    updateQueue = List.prepend inParser.data.queue AndPattern
+                    
                     when inParser.data.content  is 
                     [] ->  
-                        content = { config: Set.empty {} |> Set.insert operation, pattern : "" }  
+                        modifiedContent = [{ config: Set.empty {} |> Set.insert operation, pattern : "" }]
                         { inParser &
                             current : { handlers: simpleHandlers, data : Simple  "", left : "" },
-                            data : { queue : updateQueue, content : [content]} }
+                            data : { queue : updatedQueue, content : modifiedContent} }
                     [.. as head, last] ->
                         if Str.isEmpty last.pattern then 
                             elem = { config: Set.empty {} |> Set.insert operation, pattern : "" }  
                             { inParser &
                                 current : { handlers: simpleHandlers, data : Simple  "", left : "" },
-                                data : { queue : updateQueue, content : (List.append inParser.data.content elem)} }
+                                data : { queue : updatedQueue, content : (List.append inParser.data.content elem)} }
                         else 
-                            content = 
+                            modifiedContent = 
                                 inParser.data.content
                                 |> List.dropLast 1
                                 |> List.append { last & config: Set.insert last.config operation  } 
                                       
                             { inParser &
                                 current : { handlers: simpleHandlers, data : Simple  "", left : "" },
-                                data : { queue : updateQueue, content : content} } 
+                                data : { queue : updatedQueue, content : modifiedContent} } 
                                 
                 (if Set.contains configDataProcessed.options LogicalAnd == Bool.true then
- 
+
                     entryHandlers =
                         Dict.empty {}
                         |> Dict.insert "^\\("  conditionHit
                     { parser &
                             current : { handlers: entryHandlers, data : Condition Bool.false, left : "" },
-                            data : { queue : [OpenAnd], content : parser.data.content } }
+                            data : { queue : [OpenAnd], content : content } }
                 else
-                    parser
+                    { parser & data : { queue : [], content : content } }
                 )
                 |> ( \ inProcessParser -> 
                     if Set.contains configDataProcessed.options Regex == Bool.true then 
@@ -192,36 +224,29 @@ evaluate = \ data, parser ->
                     else 
                         inProcessParser )
                 |> ( \ inProcessParser -> 
-                    if Set.contains configDataProcessed.options Regex == Bool.true then 
+                    if Set.contains configDataProcessed.options Blacklist == Bool.true then 
                         (updateParser inProcessParser Blacklist)
                     else 
                         inProcessParser )
                 |> ( \ inProcessParser -> 
-                    if Set.contains configDataProcessed.options Regex == Bool.true then 
+                    if Set.contains configDataProcessed.options Color == Bool.true then 
                         (updateParser inProcessParser Color)
-                    else 
-                        inProcessParser )
-                |> ( \ inProcessParser -> 
-                    if Set.contains configDataProcessed.options Regex == Bool.true then 
-                        (updateParser inProcessParser Allow)
                     else 
                         inProcessParser )
                 |> ( \ inProcessParser -> Ok inProcessParser)
         Condition cond -> 
             when parser.data.queue is 
                 [OpenAnd, ..] ->
-                    closeHandlers =
-                        Dict.empty {}
-                        |> Dict.insert "\\)" conditionHit                    
+                                      
                     updatedQueue = 
                         parser.data.queue
                         |> List.dropFirst 1
                         |> List.prepend EndAnd                    
                     Ok 
                         { parser &
-                            current : { handlers: closeHandlers, data : Condition Bool.false, left : "" },
+                            current : { handlers: closeANDHandlers, data : Condition Bool.false, left : "" },
                             data : { queue : updatedQueue, content : parser.data.content } }
-
+                
                 [EndAnd, .. as tail] -> 
                     if cond == Bool.true then 
                         if List.isEmpty parser.data.content then 
@@ -261,6 +286,7 @@ isParserCompleted = \ parserData ->
 
 runParser : Str, ParserType -> Result ParserDataType Str
 runParser = \ input, parser -> 
+    dbg  parser.data
     loopCommand : Str, MiniParserType -> Result MiniParserType Str
     loopCommand = \ feedRaw, miniParser ->
         feed = Str.trimStart feedRaw
@@ -276,6 +302,7 @@ runParser = \ input, parser ->
                     Ok config ->
                         when Regex.parseStrMagic feed pattern parser.regexMagic is 
                             Ok parsed ->
+                            
                                 if parsed.matchFound == Bool.true then
                                     when Dict.get config.handlers pattern is
                                         Ok handler ->
