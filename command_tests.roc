@@ -10,13 +10,28 @@ app "testCommands"
         pf.Cmd,
         pf.Env,
         Utils,
+        Regex.{regexMagic,ParsingResultType},
         pf.Task.{ Task },
-        Commands,
+        Commands.{ParserType, MiniParserType, ParserOutcomeType, MiniParserDataType, OperationType, configMiniParser},
     ]
     provides [main] to pf
 
-main =   
 
+main = 
+# commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
+# commandsToHandlers =
+#     Dict.empty {}
+#     |> Dict.insert "^[Nn][Ll]@\\s" createNumberLines
+#     #|> Dict.insert "dsdsa" (\ type, config -> andMode type, config )  # those lines create cycles I am not sure they should be  
+#     #|> Dict.insert "dsdsa"  andMode 
+#     |> Dict.insert "^([Rr])?@(.+)->([Rr])?@(\\S+)\\s" createPatternToPattern
+#     |> Dict.insert "^(\\d+|s)->(\\d+|e)@\\s" createLineToLine
+#     |> Dict.insert "^(([^@]+@)?(\\S*)\\s)" handleOthers
+
+
+         
+    dbg Commands.runParser " and@( fsdfs  r@sfsdf  b@sffsd ) "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic } 
+    
     Stdout.write  "the goal ofthis unit is to test Commands.roc"
 
 
@@ -105,7 +120,7 @@ expect
         Ok config ->
             config.patterns == []  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == SearchSection {before : 10,  after : 10, pattern : (Regex (Allow "black[1-9]")) }
+            config.command == SearchSection [{before : 10,  after : 10, pattern : (Regex (Allow "black[1-9]")) }]
         Err mes -> mes == "test region "
 
 expect
@@ -113,7 +128,7 @@ expect
         Ok config ->
             config.patterns == []  &&
             Set.isEmpty  config.modifiers == Bool.true &&  
-            config.command == SearchSection {before : 10, after : 0, pattern:  (Allow "black")}
+            config.command == SearchSection [{before : 10, after : 0, pattern:  (Allow "black")}]
         Err mes -> mes == "test region before "
 
 

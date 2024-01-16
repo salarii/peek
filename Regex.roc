@@ -1,5 +1,13 @@
 interface Regex
-    exposes [parseStr, getValue, ParsingResultType, TokenType, regexMagic, MagicType, parseStrMagic]
+    exposes [
+        parseStr,
+        getValue, 
+        ParsingResultType, 
+        TokenType, 
+        regexMagic, 
+        MagicType, 
+        parseStrMagic,
+        createParsingRecord]
     imports [Utils]
 
 
@@ -1220,6 +1228,28 @@ parseStr = \ str, pattern ->
 
         _ -> Err   "This is internal regex error not your fault\n" 
 
+
+parseStrMagicFull : Str, Str, MagicType -> Result ( List ParsingResultType)  Str
+parseStrMagicFull = \ str, pattern, magic -> 
+    when magic is
+        (Ok mainRegex, Ok onlyExceptRegex) ->
+
+            tokensFromUserInputResult = regexCreationStage pattern mainRegex onlyExceptRegex []
+
+            when tokensFromUserInputResult is 
+                Ok tokensFromUserInput ->
+                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
+
+                    Ok (List.walk independentChainlst []  ( \ state, regexParser ->  
+                        parsResult = checkMatching (Str.toUtf8  str ) regexParser    
+                        if parsResult.matchFound == Bool.true then
+                            List.append  state parsResult
+                        else 
+                            state ))
+                Err message -> 
+                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
+
+        _ -> Err   "This is internal regex error not your fault\n" 
 
 #parseStrCached : Str, Str, Dict Str (List TokenType)-> Result {parsed : ParsingResultType,cache: Dict Str (List TokenType) }  Str
 #parseStrCached = \ str, pattern, cache -> 

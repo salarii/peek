@@ -1,5 +1,17 @@
 interface Commands
-    exposes [handleUserCommand,quitCommand, replaceTilde, recoverConfigFromInput]
+    exposes [
+        handleUserCommand,
+        quitCommand, 
+        replaceTilde, 
+        recoverConfigFromInput, 
+        runParser,
+        configMiniParser,
+        ParserType,
+        MiniParserType,
+        ParserOutcomeType,
+        MiniParserDataType,
+        OperationType
+        ]
     imports [
         pf.File,
         pf.Path,
@@ -7,7 +19,7 @@ interface Commands
         Utils,
         Regex,
         SearchText,
-        Regex.{ParsingResultType, regexMagic},
+        Regex.{ParsingResultType, regexMagic, MagicType},
         State,
         System,
         State.{StateType, PatternType, ModifiersType, CommandType, ConfigType},
@@ -15,10 +27,299 @@ interface Commands
     ]
 
 quitCommand : Str
-quitCommand =  "peekQuit" 
+quitCommand = "peekQuit" 
 
-dummyFun = \  parsResult, config ->
-    Ok config
+SimpleType : Str
+
+OperationType : [
+        Regex, 
+        Allow, 
+        Blacklist, 
+        Color, 
+        LogicalAnd, ] 
+
+ParserConfigType : { exclusive: Dict OperationType (List OperationType), options : Set OperationType }
+
+MiniParserDataType : [ Simple SimpleType, ParserConfig ParserConfigType, Condition Bool ]
+
+ParserOutcomeType : [ Completed MiniParserDataType, Continue MiniParserDataType, Error ]  
+
+MiniParserType : { handlers: Dict Str (ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str), data : MiniParserDataType, left : Str }
+
+ParserPhasesType : [ OpenAnd, EndAnd, AndPattern, AndConfig, Config, Pattern ]
+
+ParserDataType : { queue : List ParserPhasesType, content: List { config:  Set OperationType, pattern : Str } }
+
+ParserType : { current : MiniParserType, data: ParserDataType, regexMagic: MagicType }
+
+dummy : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str 
+dummy = \ parsed, miniParser -> 
+    Ok (Completed miniParser)
+
+insertTag : ParsingResultType, MiniParserDataType, OperationType -> ParserOutcomeType
+insertTag = \ _parsed, miniParserData, operation -> 
+    when miniParserData is 
+        ParserConfig configType -> 
+            when Dict.get configType.exclusive operation is 
+                Ok exclusiveLst -> 
+                    List.walkUntil exclusiveLst Bool.false (\ status, tag -> 
+                        if Set.contains configType.options tag == Bool.true then
+                            Break Bool.true
+                        else 
+                            Continue Bool.false    
+                    )
+                    |> ( \ exclusivePresent ->
+                        if exclusivePresent == Bool.true then 
+                            Error    
+                        else
+                            Continue (ParserConfig {configType & options : Set.insert configType.options operation })
+                        )
+                Err _ -> Error 
+        _ -> Error
+    
+colorHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
+colorHandler = \ parsed, miniParser ->
+    Ok (insertTag parsed miniParser Color)
+
+regexHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
+regexHandler = \ parsed, miniParser -> 
+    Ok (insertTag parsed miniParser Regex)
+
+blackListedHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
+blackListedHandler = \ parsed, miniParser -> 
+    Ok (insertTag parsed miniParser Blacklist)
+
+logicalANDHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
+logicalANDHandler = \ parsed, miniParser -> 
+    Ok (insertTag parsed miniParser LogicalAnd)
+
+concludeHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
+concludeHandler = \ _parsed, miniParserData -> 
+    Ok (Completed miniParserData)
+
+configHandlers : Dict Str (ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str)
+configHandlers =
+    Dict.empty {}
+    |> Dict.insert "^[cC]" colorHandler
+    |> Dict.insert "^[rR]" regexHandler
+    |> Dict.insert "^(\\^)(\\d+)" dummy
+    |> Dict.insert "^(>)(\\d+)" dummy
+    |> Dict.insert "^(<)(\\d+)" dummy
+    |> Dict.insert "^[bB]" blackListedHandler
+    |> Dict.insert "^[a][n][d]" logicalANDHandler
+    |> Dict.insert "^@" concludeHandler
+
+simpleHandlers =
+    Dict.empty {}
+    |> Dict.insert "^(\\S+)\\s" simpleHandler
+
+simpleHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
+simpleHandler = \ parsed, miniParserData -> 
+    when Regex.getValue [0] 0 parsed.captured is 
+        Ok pattern ->
+            Ok ( Continue (Simple ( Utils.utfToStr pattern )) )
+        _-> Err "error duing command parsing " 
+
+configData =
+    {
+        exclusive: 
+                Dict.empty {}
+                |> Dict.insert  LogicalAnd [Regex, Color]
+                |> Dict.insert  Blacklist [ Color]
+                |> Dict.insert  Color [LogicalAnd, Blacklist]
+                |> Dict.insert  Regex [LogicalAnd],
+        options : Set.empty {}
+    }
+
+configMiniParser =  { handlers: configHandlers, data :  ParserConfig configData, left : "" }
+
+conditionHit : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
+conditionHit = \ parsed, data -> 
+    Ok (Completed ( Condition parsed.matchFound ) )
+
+evaluate : MiniParserDataType, ParserType -> Result ParserType Str
+evaluate = \ data, parser ->
+    when data is 
+        Simple simpleData -> Ok parser
+        ParserConfig configDataProcessed ->
+            if Set.isEmpty configDataProcessed.options then
+                Err "unknown problem with command processing"    
+            else
+                updatedQueue = 
+                    parser.data.queue
+                    |> List.dropFirst 1
+                #  remember to fix queue
+                
+                updateParser : ParserType, OperationType -> ParserType
+                updateParser = \ inParser, operation ->
+                    updateQueue = List.prepend inParser.data.queue AndPattern
+                    when inParser.data.content  is 
+                    [] ->  
+                        content = { config: Set.empty {} |> Set.insert operation, pattern : "" }  
+                        { inParser &
+                            current : { handlers: simpleHandlers, data : Simple  "", left : "" },
+                            data : { queue : updateQueue, content : [content]} }
+                    [.. as head, last] ->
+                        if Str.isEmpty last.pattern then 
+                            elem = { config: Set.empty {} |> Set.insert operation, pattern : "" }  
+                            { inParser &
+                                current : { handlers: simpleHandlers, data : Simple  "", left : "" },
+                                data : { queue : updateQueue, content : (List.append inParser.data.content elem)} }
+                        else 
+                            content = 
+                                inParser.data.content
+                                |> List.dropLast 1
+                                |> List.append { last & config: Set.insert last.config operation  } 
+                                      
+                            { inParser &
+                                current : { handlers: simpleHandlers, data : Simple  "", left : "" },
+                                data : { queue : updateQueue, content : content} } 
+                                
+                (if Set.contains configDataProcessed.options LogicalAnd == Bool.true then
+ 
+                    entryHandlers =
+                        Dict.empty {}
+                        |> Dict.insert "^\\("  conditionHit
+                    { parser &
+                            current : { handlers: entryHandlers, data : Condition Bool.false, left : "" },
+                            data : { queue : [OpenAnd], content : parser.data.content } }
+                else
+                    parser
+                )
+                |> ( \ inProcessParser -> 
+                    if Set.contains configDataProcessed.options Regex == Bool.true then 
+                        (updateParser inProcessParser Regex)
+                    else 
+                        inProcessParser )
+                |> ( \ inProcessParser -> 
+                    if Set.contains configDataProcessed.options Regex == Bool.true then 
+                        (updateParser inProcessParser Blacklist)
+                    else 
+                        inProcessParser )
+                |> ( \ inProcessParser -> 
+                    if Set.contains configDataProcessed.options Regex == Bool.true then 
+                        (updateParser inProcessParser Color)
+                    else 
+                        inProcessParser )
+                |> ( \ inProcessParser -> 
+                    if Set.contains configDataProcessed.options Regex == Bool.true then 
+                        (updateParser inProcessParser Allow)
+                    else 
+                        inProcessParser )
+                |> ( \ inProcessParser -> Ok inProcessParser)
+        Condition cond -> 
+            when parser.data.queue is 
+                [OpenAnd, ..] ->
+                    closeHandlers =
+                        Dict.empty {}
+                        |> Dict.insert "\\)" conditionHit                    
+                    updatedQueue = 
+                        parser.data.queue
+                        |> List.dropFirst 1
+                        |> List.prepend EndAnd                    
+                    Ok 
+                        { parser &
+                            current : { handlers: closeHandlers, data : Condition Bool.false, left : "" },
+                            data : { queue : updatedQueue, content : parser.data.content } }
+
+                [EndAnd, .. as tail] -> 
+                    if cond == Bool.true then 
+                        if List.isEmpty parser.data.content then 
+                            Err "error in and command, empty pattern section"
+                        else
+                            when tail is 
+                                [] ->
+                                    Ok {parser & data : { queue : [], content : parser.data.content }  }   
+                                _ -> 
+                                    evaluate data  {parser & data : { queue : [], content : parser.data.content }  }
+                    else 
+                        andHandlers =
+                            Dict.empty {}
+                            |> Dict.insert "^[rR]" regexHandler
+                            |> Dict.insert "^[bB]" blackListedHandler
+                            |> Dict.insert "^@" concludeHandler
+                            
+                        andConfigData = { exclusive: Dict.empty {}, options : Set.empty {} }
+                        updatedQueue = 
+                            parser.data.queue
+                            |> List.dropFirst 1
+                            |> List.prepend AndConfig
+                            
+                        Ok { parser &
+                            current : { handlers: andHandlers, data : ParserConfig andConfigData, left : "" },
+                            data : { queue : updatedQueue, content : parser.data.content } }
+                _ -> 
+                    Err "unknown problem with command processing"
+
+isCompleted : MiniParserDataType -> Bool
+isCompleted = \ parserData -> 
+    Bool.true
+
+isParserCompleted : ParserDataType -> Bool
+isParserCompleted = \ parserData -> 
+    List.isEmpty parserData.queue
+
+runParser : Str, ParserType -> Result ParserDataType Str
+runParser = \ input, parser -> 
+    loopCommand : Str, MiniParserType -> Result MiniParserType Str
+    loopCommand = \ feedRaw, miniParser ->
+        feed = Str.trimStart feedRaw
+        if Str.isEmpty feed then
+            if isCompleted miniParser.data then
+                Ok miniParser                
+            else
+                Err "error while processing \(input)"
+        else
+            Dict.keys miniParser.handlers
+            |> List.walkUntil (Ok miniParser) (\ state, pattern ->
+                when state  is 
+                    Ok config ->
+                        when Regex.parseStrMagic feed pattern parser.regexMagic is 
+                            Ok parsed ->
+                                if parsed.matchFound == Bool.true then
+                                    when Dict.get config.handlers pattern is
+                                        Ok handler ->
+                                            dataResult = handler parsed config.data
+                                            when dataResult is
+                                                Ok data -> 
+                                                    when data is 
+                                                        Continue parsData ->
+                                                            Break (loopCommand (Utils.utfToStr parsed.left) {config & data : parsData })  
+                                                        Completed parsData ->
+                                                            Break ( Ok {config & data : parsData, left : Utils.utfToStr parsed.left })
+                                                        Error -> Continue ( Ok {miniParser & left : input})
+                                                Err _ -> Break (Err "error while processing \(input)")
+                                        Err _ -> 
+                                            Break (Err "internal application error, during comand \(input) analysis")
+                                else 
+                                    Continue (Ok {config & left : input})
+                            Err message -> Break (Err message)
+                    Err message -> Break (Err message)
+                    )
+    loopCommand  input parser.current
+    |> ( \ parsedResult ->
+        when parsedResult is 
+            Ok  parsed -> 
+                when evaluate parsed.data parser  is
+                    Ok alteredParser ->
+                        if isParserCompleted alteredParser.data then
+                            Ok alteredParser.data
+                        else 
+                            runParser parsed.left alteredParser
+                    Err message -> Err message  
+
+            Err message -> Err message  )                
+    
+
+# commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
+# commandsToHandlers =
+#     Dict.empty {}
+#     |> Dict.insert "^[Nn][Ll]@\\s" createNumberLines
+#     #|> Dict.insert "dsdsa" (\ type, config -> andMode type, config )  # those lines create cycles I am not sure they should be  
+#     #|> Dict.insert "dsdsa"  andMode 
+#     |> Dict.insert "^([Rr])?@(.+)->([Rr])?@(\\S+)\\s" createPatternToPattern
+#     |> Dict.insert "^(\\d+|s)->(\\d+|e)@\\s" createLineToLine
+#     |> Dict.insert "^(([^@]+@)?(\\S*)\\s)" handleOthers
 
 
 colorTag : ParsingResultType, ConfigType -> Result ConfigType Str
@@ -290,41 +591,76 @@ modifierAnalysis = \ word, inState ->
                     
                 Err message -> Break (Err message)
         )
+        
+preventDoubleAND : Str, MagicType -> Bool
+preventDoubleAND = \ str, magic ->
+    when Regex.parseStrMagic str "[a][n][d]@" magic is 
+        Ok parsed ->
+            if parsed.matchFound == Bool.true then
+                when Regex.parseStrMagic (Utils.utfToStr parsed.left) "[a][n][d]@" magic is
+                    Ok secParse ->
+                        Bool.not secParse.matchFound
+                    Err _ -> 
+                        Bool.false
+            else 
+                Bool.true
+        Err _ -> Bool.false
 
+findCommandCandidate : List ParsingResultType, (Str, MagicType -> Bool), MagicType -> ParsingResultType
+findCommandCandidate = \  candidates, isSane, magic ->
+    if List.isEmpty candidates == Bool.true then 
+        Regex.createParsingRecord [] Inactive No
+    else 
+        # pick longest sane candidate
+        List.walk candidates (Regex.createParsingRecord [] Inactive No) (\ candidate, current  ->
+            if List.len candidate.matched < List.len current.matched && 
+               isSane (Utils.utfToStr current.matched) magic == Bool.true then
+                current
+            else
+                candidate
+        )
 
 commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
 commandsToHandlers =
     Dict.empty {}
-    |> Dict.insert "^[Nn][Ll]@" createNumberLines
+    |> Dict.insert "^[Nn][Ll]@\\s" createNumberLines
     #|> Dict.insert "dsdsa" (\ type, config -> andMode type, config )  # those lines create cycles I am not sure they should be  
     #|> Dict.insert "dsdsa"  andMode 
-    |> Dict.insert "([Rr])?@(.+)->([Rr])?@(.+)" createPatternToPattern
-    |> Dict.insert "^(\\d+|s)->(\\d+|e)@\$" createLineToLine
-    |> Dict.insert "(([^@]+@)?(.*))" handleOthers
+    |> Dict.insert "^([Rr])?@(.+)->([Rr])?@(\\S+)\\s" createPatternToPattern
+    |> Dict.insert "^(\\d+|s)->(\\d+|e)@\\s" createLineToLine
+    |> Dict.insert "^(([^@]+@)?(\\S*)\\s)" handleOthers
     
 simplifiedSyntax : Dict Str Str
 simplifiedSyntax = 
     Dict.empty {}
 
-commandAnalysis : Str, ConfigType -> Result ConfigType Str
-commandAnalysis = \ word, inConfig -> 
-    Dict.keys commandsToHandlers
-    |> List.walkUntil (Ok inConfig) (\ state, pattern ->
-        when state  is 
-            Ok config -> 
-                when Regex.parseStrMagic word pattern inConfig.regexMagic is
-                    Ok parsed -> 
-                        if parsed.matchFound == Bool.true then
-                            when Dict.get commandsToHandlers pattern  is
-                                Ok handler ->
-                                    Break (handler parsed config)
-                                Err _ -> 
-                                    Break (Err "command  \(word) evaluation error")
-                        else 
-                            Continue state
-                    Err message -> Break (Err message)
-            Err message -> Break (Err message)
-         )
+commandAnalysis : Str, ConfigType -> Result {config: ConfigType, left : Str} Str
+commandAnalysis = \ line, inConfig ->
+    cleanLine = Str.trimStart line
+    if Str.isEmpty cleanLine then
+        Ok {config: inConfig, left : cleanLine}
+    else 
+        Dict.keys commandsToHandlers
+        |> List.walkUntil (Ok {config: inConfig, left: "" }) (\ state, pattern ->
+            when state  is 
+                Ok {config: config,left: _} -> 
+                    when Regex.parseStrMagic (Str.trimStart line) pattern inConfig.regexMagic is
+                        Ok parsed -> 
+                            if parsed.matchFound == Bool.true then
+                                when Dict.get commandsToHandlers pattern  is
+                                    Ok handler ->
+                                        when (handler parsed config) is 
+                                            Ok outConfig -> 
+                                                Break (Err "command  \(line) evaluation error")
+                                                #Break (Ok {config: outConfig, left: Utils.utfToStr parsed.left })
+                                            Err _ -> Break (Err "command  \(line) evaluation error")
+                                    Err _ -> 
+                                        Break (Err "command  \(line) evaluation error")
+                            else 
+                                Continue state
+                        Err message -> Break (Err message)
+                Err message -> Break (Err message)
+            )
 
 recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \filterStr ->
@@ -364,12 +700,16 @@ recoverConfigFromInput = \filterStr ->
             
     when andEvaluatedResult is 
         Ok andEvaluated -> 
+            loopCommand :  Str, ConfigType -> Result ConfigType Str
+            loopCommand = \ input, config ->
+                if Str.isEmpty input then 
+                    Ok config
+                else
+                    when commandAnalysis input config is 
+                        Ok updatedConfig ->  loopCommand updatedConfig.left updatedConfig.config
+                        Err message ->  Err message            
+            loopCommand (Str.concat  andEvaluated.1 andEvaluated.2) andEvaluated.0
             
-            List.walkTry (Utils.tokenize (Str.concat  andEvaluated.1 andEvaluated.2)) andEvaluated.0  (\ config, word ->
-                when commandAnalysis word config is 
-                    Ok updatedConfig ->  Ok updatedConfig
-                    Err message ->  Err message
-                )
         Err message -> Err message
 
 replaceTilde : StateType, Str  -> Str
