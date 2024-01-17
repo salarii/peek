@@ -328,10 +328,82 @@ runParser = \ input, parser ->
 
             Err message -> Err message  )                
     
-# createConfig :     ParserOutType
-# createConfig \ = 
+# createConfig : ParserOutType, ConfigType -> Result ConfigType Str  
+# createConfig \ = parserData, config ->
+#     if List.empty parserData == Bool.true then
+#         Ok config
+#     else 
+#         modifHandlers = 
+#             Dict.empty {}
+#             |> Dict.insert Color colorUpdate
+#             |> Dict.insert Regex regexUpdate
+#             |> Dict.insert Blacklist blackListUpdate
+                    
+#         goOverOptions: List OperationType, ParserType -> Result ParserType Err
+#         goOverOptions = \ operationLst, parser ->            
+#             List.walkTry operationLst parser ( \ state, type ->
+#                 when Dict.get  modifHandlers type is 
+#                     Ok handler ->
+#                         handler parser
+#                     Err _ -> Err "unknown problem during command processing" )
 
+#         # bit ugly
+#         ( List.walkUntil inParserData (Err "missing command data") (\ state, data ->
+#             if Set.contains data.config LogicalAnd
+#                 if data.content == "Stop" then
+#                     state
+#                 else 
+#                     (goOverOptions  
+#                         Set.toList(Set.remove data.config LogicalAnd) 
+#                         ( Allow (LogicalAnd []) ) )
+#                     |> (\ result -> 
+#                         ( List.dropFirst inParserData, result ) )
+#             else  
+#                 if Str.isEmpty data.content then
+#                     Break ( Err "unknown problem during command processing" )
+#                 else 
+#                     currntPattern = 
+#                         when state is 
+#                             Ok pattern -> 
+#                                 pattern
+#                             Err _ -> Allow (Plain data.content)
+#                     (when goOverOptions data.config currntPattern is
+#                                 Ok  updatedPattern ->
+#                                     when updatedPattern is  
+#                                         _ (LogicalAnd _) -> 
+#                                             Continue updatedPattern
+#                                         _ -> Break updatedPattern
+#                                 Err message -> Break (Err message) ))
+#                     |> (\ result -> 
+#                         Break ( List.dropFirst inParserData, result ) ))
+#     |> (\ configResult ->
+#         when configResult.1 is
+#             Ok updatedConfig -> 
+#                 createConfig configResult.0  config
+#             Err message -> Err message
+#     )          
 
+# colorUpdate : ParserType -> Result ParserType Str
+# colorUpdate = \ parser ->
+#     when parser is
+#         Allow pat->
+#             Ok (Color pat)
+#         _ -> Err "unsupported option"
+
+# colorUpdate : ParserType -> Result ParserType Str
+# colorUpdate = \  parser ->
+#     when parser is
+#         Allow pat->
+#             Ok (Color pat)
+#         _ -> Err "unsupported option"
+    
+# regexUpdate : ParserType -> Result ParserType Str
+# regexUpdate = \  parser ->
+#     when parser is
+#         tag (Plain pat)->
+#             Ok tag (Regex pat)  
+#         _ -> Err "unsupported option"
+    
 # commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
 # commandsToHandlers =
 #     Dict.empty {}
@@ -447,13 +519,14 @@ andMode = \  parsResult, config ->
                                 _ -> Err "color cannot be used in and construction"
                         ))
                         |> (\ andPatternResult ->
-                            when andPatternResult  is 
-                                Ok lst ->
-                                    if config.command == None then
-                                        Ok {config & patterns : List.append config.patterns (LogicalAnd lst), command : Search}
-                                    else
-                                        Ok {config & patterns : List.append config.patterns (LogicalAnd lst)}
-                                Err message -> Err message   
+                            Err "Error in parsing and@ command"
+                            # when andPatternResult  is 
+                            #     Ok lst ->
+                            #         if config.command == None then
+                            #             Ok {config & patterns : List.append config.patterns (Allow (LogicalAnd lst)), command : Search}
+                            #         else
+                            #             Ok {config & patterns : List.append config.patterns (Allow (LogicalAnd lst))}
+                            #     Err message -> Err message   
                         )
                     else 
                         Err "Error in parsing and@ command"

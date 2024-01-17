@@ -315,27 +315,31 @@ analyseLine : LineInput, List PatternType, List LineProcessedType, Bool, ConfigT
 analyseLine = \ lineData, patterns, register, matchAll, config ->
     sortPatterns = 
         List.walk patterns decomposeEmpty (\state,  pattern -> 
-            when pattern is 
+            when pattern is
+                Allow (LogicalAnd  patternLst) | Blacklist (LogicalAnd  patternLst) -> 
+                    List.walk patternLst (Set.empty {},Set.empty {}) ( \ inState, andPattern -> 
+                        when  andPattern is 
+                            Allow (Plain pat) -> 
+                                (Set.insert inState.0 (Allow (Plain pat)), inState.1)
+                            Allow (Regex pat) ->  
+                                (Set.insert inState.0 (Allow (Regex pat)), inState.1)
+                            Blacklist (Plain pat) ->
+                                (inState.0, Set.insert inState.1 (Blacklist (Plain pat)))
+                            Blacklist (Regex pat) -> 
+                                (inState.0, Set.insert inState.1 (Blacklist (Regex pat)))
+                            _ -> inState
+                        )
+                    |> (\ andSet ->  
+                        { state &
+                            andDecomposed : List.append state.andDecomposed {pattern: pattern, decomposed : andSet},
+                        } )
+            
                 Allow pat ->
                     #  I made mistake as below and this caused compiler to hang during build : )
                     # { state &  allow : Set.insert state.allow pattern}  
                     { state &  allow : Set.insert state.allow pattern }
                 Blacklist pat -> 
                     { state &  block : Set.insert state.block pattern }
-                _ -> 
-                    state
-                LogicalAnd  patternLst ->
-                    List.walk patternLst (Set.empty {},Set.empty {}) ( \ inState, andPattern -> 
-                        when  andPattern is 
-                            Allow pat ->  
-                                (Set.insert inState.0 (Allow pat), inState.1)
-                            Blacklist pat -> 
-                                (inState.0, Set.insert inState.1 (Blacklist pat))
-                        )
-                    |> (\ andSet -> 
-                        { state &
-                            andDecomposed : List.append state.andDecomposed {pattern: LogicalAnd  patternLst, decomposed : andSet},
-                        } )
                 _-> state
                 )
     miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, content: lineData.line,status : Miss }

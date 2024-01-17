@@ -30,12 +30,11 @@ interface State
 
 PatternType : 
     [ 
-        Regex Str,
-        Allow [ Plain Str, Regex Str],
-        Blacklist [ Plain Str, Regex Str],
-        Color [ Plain Str, Regex Str],
-        LogicalAnd 
-            (List [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]]) ]
+        Allow [ Plain Str, Regex Str, LogicalAnd (List [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]])],
+        Blacklist [ Plain Str, Regex Str, LogicalAnd (List [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]])],
+        Color [ Plain Str, Regex Str],   
+        ] 
+            
 
 ModifiersType : [ NumberLines, LogicAND]
 
