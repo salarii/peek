@@ -16,7 +16,7 @@ interface State
         getCommandHistory,
         setTerminalHistory,
         updatePrompt,
-        createConfig,
+        createConfigInstance,
         StateType,
         TerminalLineStateType,
         PatternType,
@@ -89,8 +89,8 @@ StateType := {
 
 
 
-createConfig :  List [FromLineToLine  I32 I32], CommandType, Set ModifiersType, List PatternType -> ConfigType
-createConfig = \  limit, command, modifiers, patterns -> 
+createConfigInstance :  List [FromLineToLine  I32 I32], CommandType, Set ModifiersType, List PatternType -> ConfigType
+createConfigInstance = \  limit, command, modifiers, patterns -> 
     {limit : limit, command : command, modifiers : modifiers, patterns : patterns, regexMagic : regexMagic,}
 
 

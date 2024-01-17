@@ -10,6 +10,7 @@ app "testCommands"
         pf.Cmd,
         pf.Env,
         Utils,
+        State,
         Regex.{regexMagic,ParsingResultType},
         pf.Task.{ Task },
         Commands.{ParserType, MiniParserType, ParserOutcomeType, MiniParserDataType, OperationType, configMiniParser},
@@ -30,7 +31,24 @@ main =
 
 
          
-    dbg Commands.runParser " and@( fsdfs  r@sfsdf  b@sffsd ) "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic } 
+    w =
+        when Commands.runParser " fsdfs  rc@sfsdf  b@sffsd "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
+        #when Commands.runParser " and@( fsdfs  r@sfsdf  b@sffsd ) "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
+            Ok  parserData ->
+                configResult = Commands.updateConfig (State.createConfigInstance [] None (Set.empty {}) [] ) parserData.content
+                hh =
+                    when  configResult  is 
+                        Ok  config  ->
+                            dbg config.command
+                            dbg config.patterns
+                            "ok"
+                        Err message ->  
+                            dbg  message
+                            message 
+                ""
+            Err mess -> 
+                dbg  "error"
+                mess 
     
     Stdout.write  "the goal ofthis unit is to test Commands.roc"
 
