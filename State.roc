@@ -36,7 +36,7 @@ PatternType :
         ] 
             
 
-ModifiersType : [ NumberLines, LogicAND]
+ModifiersType : [ NumberLines]
 
 SectionType : {before: Nat, after:  Nat, pattern : PatternType}
 

@@ -98,7 +98,6 @@ createRawOut = \ rawLst, outLst ->
             
 evalSearch : List Str, ConfigType -> { terminal: Str, raw : Str }
 evalSearch = \ content, config ->
-    matchAll = Set.contains  config.modifiers LogicAND
     numIdxLen = Utils.strUtfLen( Num.toStr (List.len content) )
     printLine :  LineProcessedType, (Bool, Nat) -> Str 
     printLine = \ processed, printLineNumber -> 
@@ -145,7 +144,7 @@ evalSearch = \ content, config ->
         when config.command is 
             Search -> 
                 List.walkTry lineNembersAdded.0 [] (\ register, line->
-                    analyseLine line config.patterns register matchAll config
+                    analyseLine line config.patterns register config
                 )
                 |> ( \searchResult ->
                     when searchResult is
@@ -170,11 +169,11 @@ evalSearch = \ content, config ->
             FromPatternToPattern fromPat toPat ->
                 patternsProcessedResult =
                     List.walkTry lineNembersAdded.0 [] (\ register, line->
-                        analyseLine line config.patterns register matchAll config
+                        analyseLine line config.patterns register config
                     )
                 rangesProcessedResult =
                     List.walkTry lineNembersAdded.0 [] (\ register, line->
-                        analyseLine line [fromPat, toPat] register Bool.false config
+                        analyseLine line [fromPat, toPat] register config
                     )
                 when (patternsProcessedResult, rangesProcessedResult )  is 
                     (Ok patternsProcessed, Ok ranges ) ->
@@ -241,12 +240,12 @@ evalSearch = \ content, config ->
             SearchSection sectionsLst ->        
                 patternsProcessed =
                     List.walkTry lineNembersAdded.0 [] (\ register, line->
-                        analyseLine line config.patterns register matchAll config
+                        analyseLine line config.patterns register config
                     )
                 gatherPatterns = List.walk sectionsLst [] (\ lst, section -> List.append lst section.pattern )
                 hotProcessed =
                     List.walkTry lineNembersAdded.0  [] (\ register, line->
-                            analyseLine line gatherPatterns register Bool.false config
+                            analyseLine line gatherPatterns register config
                     )
                 when (patternsProcessed, hotProcessed )  is 
                     (Ok patterns, Ok hot ) ->
@@ -311,8 +310,8 @@ mergeStatus = \ leftStatus, rightStatus ->
             rightStatus              
 
 # ConfigType walkaround here
-analyseLine : LineInput, List PatternType, List LineProcessedType, Bool, ConfigType -> Result (List LineProcessedType) Str   
-analyseLine = \ lineData, patterns, register, matchAll, config ->
+analyseLine : LineInput, List PatternType, List LineProcessedType, ConfigType -> Result (List LineProcessedType) Str   
+analyseLine = \ lineData, patterns, register, config ->
     sortPatterns = 
         List.walk patterns decomposeEmpty (\state,  pattern -> 
             when pattern is

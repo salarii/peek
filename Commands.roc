@@ -41,13 +41,13 @@ OperationType : [
 
 ParserConfigType : { exclusive: Dict OperationType (List OperationType), options : Set OperationType }
 
-MiniParserDataType : [ Simple SimpleType, ParserConfig ParserConfigType, Condition Bool ]
+MiniParserDataType : [ Simple SimpleType, ParserConfig ParserConfigType, Condition Bool, Other [FromLineToLine  I32 I32, NumberLines, None] ]
 
 ParserOutcomeType : [ Completed MiniParserDataType, Continue MiniParserDataType, Error ]  
 
 MiniParserType : { handlers: Dict Str (ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str), data : MiniParserDataType, left : Str }
 
-ParserPhasesType : [ OpenAnd, EndAnd, AndPattern, AndConfig, Config, Pattern ]
+ParserPhasesType : [ OpenAnd, EndAnd, AndPattern, AndConfig, Config, Pattern, FullCommands ]
 
 ParserOutType : { config:  Set OperationType, pattern : Str }
 
@@ -113,6 +113,39 @@ configHandlers =
     |> Dict.insert "^[a][n][d]" logicalANDHandler
     |> Dict.insert "^@" concludeHandler
 
+fullCommandsHandlers : Dict Str (ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str)
+fullCommandsHandlers =
+    Dict.empty {}
+    |> Dict.insert "^[Nn][Ll]@\\s" createNumberLines
+    |> Dict.insert "^(\\d+|s)->(\\d+|e)@\\s" createLineToLine
+
+    #|> Dict.insert "^([Rr])?@(.+)->([Rr])?@(\\S+)\\s" createPatternToPattern
+
+fullCommandMiniParser =  { handlers: fullCommandsHandlers, data :  Other None, left : "" }
+
+createNumberLines : createNumberLines, MiniParserDataType -> Result ParserOutcomeType Str
+createNumberLines = \ parsed, miniParser -> 
+    Ok (Completed ( Other NumberLines ) )
+        
+createLineToLine : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
+createLineToLine = \ parsResult, _miniParser ->
+    when ( 
+        Regex.getValue [0] 0 parsResult.captured,
+        Regex.getValue [1] 0 parsResult.captured)  is
+            (Ok pat1,Ok pat2) ->
+                when (pat1, pat2) is 
+                    (['s'],['e'])->
+                        Ok ( Completed (Other (FromLineToLine  1 -1)) )
+                    (['s'],val)->
+                        Ok ( Completed (Other (FromLineToLine  1 (Utils.asciiArrayToNumber val Str.toI32)) ) )
+                    (val,['e'])->
+                        Ok ( Completed (Other (FromLineToLine  (Utils.asciiArrayToNumber val Str.toI32) -1) ) )
+                    (valStart,valEnd)->
+                        Ok ( Completed (Other (FromLineToLine  (Utils.asciiArrayToNumber valStart Str.toI32)  (Utils.asciiArrayToNumber valEnd Str.toI32)) ) )
+                    _ ->
+                        Err "Command processing error : \(Utils.utfToStr parsResult.matched) comand"
+            _ -> Err "Command processing error : \(Utils.utfToStr parsResult.matched) comand"
+    
 simpleHandlers =
     Dict.empty {}
     |> Dict.insert "^(\\S+)\\s" simpleHandler
@@ -150,7 +183,21 @@ evaluate = \ data, parser ->
     updatedQueue = 
         parser.data.queue
         |> List.dropFirst 1
-    when data is 
+    when data is
+        Other other ->
+            when other is
+                None -> 
+                    Ok
+                        { parser &
+                            current : configMiniParser,
+                            data : { queue : updatedQueue |> List.prepend Config, content : parser.data.content } }
+
+                (FromLineToLine  _ _) | NumberLines ->
+                    Ok
+                        { parser &
+                            current : fullCommandMiniParser,
+                            data : { queue : updatedQueue |> List.prepend FullCommands, content : parser.data.content } }
+                _ -> Err  "unknown problem with command processing" 
         Simple simpleData ->
             when parser.data.queue is 
                 [AndPattern, ..] ->
@@ -404,8 +451,6 @@ updateConfig = \ config, parserDataLst ->
 #             modifiers: mergedmodifiers,
 #     }
 
-
-
 colorUpdate : PatternType -> Result PatternType Str
 colorUpdate = \ pattern ->
     when pattern is
@@ -432,41 +477,6 @@ regexUpdate = \ pattern ->
         Blacklist (Plain pat) ->
             Ok (Blacklist (Regex pat))
         _ -> Err "unsupported option"
-    
-# commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
-# commandsToHandlers =
-#     Dict.empty {}
-#     |> Dict.insert "^[Nn][Ll]@\\s" createNumberLines
-#     #|> Dict.insert "dsdsa" (\ type, config -> andMode type, config )  # those lines create cycles I am not sure they should be  
-#     #|> Dict.insert "dsdsa"  andMode 
-#     |> Dict.insert "^([Rr])?@(.+)->([Rr])?@(\\S+)\\s" createPatternToPattern
-#     |> Dict.insert "^(\\d+|s)->(\\d+|e)@\\s" createLineToLine
-#     |> Dict.insert "^(([^@]+@)?(\\S*)\\s)" handleOthers
-
-colorTag : ParsingResultType, ConfigType -> Result ConfigType Str
-colorTag = \  parsResult, config ->
-    when (config.command, config.patterns) is
-        (None, [Allow (Plain pat)])->
-            Ok { config & command : Search, patterns : [Color (Plain pat) ] }
-        (Search, [Allow (Regex  pat)])-> 
-            Ok { config & patterns : [Color (Regex pat) ] }
-        _ -> Ok config
-
-regex : ParsingResultType, ConfigType -> Result ConfigType Str
-regex = \  parsResult, config ->
-    when (config.command, config.patterns) is
-        (None, [Allow (Plain pat)]) ->
-            Ok { config & command : Search, patterns : [Allow (Regex pat) ] }
-        (Search, [Color (Plain pat)]) -> 
-            Ok { config & patterns : [Color (Regex pat) ] }
-        (Search, [Blacklist (Plain pat)]) -> 
-            Ok { config & patterns : [Blacklist (Regex pat) ] }
-        (SearchSection patternLst, _) ->
-            when patternLst is 
-                [.., {before: head, after : tail, pattern : (Allow (Plain pat))}] ->
-                    Ok { config & command: SearchSection (Utils.modifyLastInList  patternLst {before:  head , after:  tail, pattern : (Allow (Regex pat) ) } )}
-                _ -> Err "section error"
-        _ -> Ok config
 
 createSection : ParsingResultType, ConfigType -> Result ConfigType Str
 createSection = \  parsResult, config ->
@@ -522,55 +532,6 @@ createSection = \  parsResult, config ->
                         _ -> Err "wrong syntax" 
         _ -> Err "you try to put to many command " 
 
-
-createNumberLines : ParsingResultType, ConfigType -> Result ConfigType Str
-createNumberLines = \  parsResult, config ->
-    Ok { config & modifiers : Set.insert config.modifiers NumberLines }
-    
-andMode : ParsingResultType, ConfigType -> Result ConfigType Str
-andMode = \  parsResult, config ->
-    when Regex.getValue [0] 0 parsResult.captured is
-        Ok patterns ->
-            inConfigResult = 
-                Utils.tokenize (Utils.utfToStr patterns)
-                |> recoverConfigFromInput 
-            when inConfigResult is 
-                Ok inConfig ->
-                    if inConfig.command == Search then                    
-                        (
-                        List.walkTry inConfig.patterns [] (\ andLst, pattern ->   
-                            when  pattern is 
-                                Allow pat ->  
-                                   Ok (List.append andLst (Allow pat))
-                                Blacklist pat -> 
-                                    Ok  (List.append andLst (Blacklist pat))
-                                _ -> Err "color cannot be used in and construction"
-                        ))
-                        |> (\ andPatternResult ->
-                            Err "Error in parsing and@ command"
-                            # when andPatternResult  is 
-                            #     Ok lst ->
-                            #         if config.command == None then
-                            #             Ok {config & patterns : List.append config.patterns (Allow (LogicalAnd lst)), command : Search}
-                            #         else
-                            #             Ok {config & patterns : List.append config.patterns (Allow (LogicalAnd lst))}
-                            #     Err message -> Err message   
-                        )
-                    else 
-                        Err "Error in parsing and@ command"
-                Err _ ->  Err "Error in parsing and@ command"
-        _ -> Err "Error in parsing and@ command"
-
-createBlackListed : ParsingResultType, ConfigType -> Result ConfigType Str
-createBlackListed = \  parsResult, config ->
-    when (config.command, config.patterns) is
-        (None, [ Allow (Plain pat) ])  ->
-                Ok { config & command : Search, patterns : [Blacklist (Plain pat)] }
-        (Search, [Allow (Regex pat ) ])  ->
-                Ok { config & patterns : [Blacklist (Regex pat)] }
-        _ -> Ok  config
-
-
 createPatternToPattern : ParsingResultType, ConfigType -> Result ConfigType Str
 createPatternToPattern = \  parsResult, config ->
     { command: com, modifiers : mod, patterns : lst } = config
@@ -595,30 +556,7 @@ createPatternToPattern = \  parsResult, config ->
                             Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
                 _ -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
         _ -> Ok config
-        
-        
-createLineToLine : ParsingResultType, ConfigType -> Result ConfigType Str
-createLineToLine = \  parsResult, config ->
-    #{ command: com, modifiers : mod, patterns : lst } = config
-      
-    when ( 
-        Regex.getValue [0] 0 parsResult.captured,
-        Regex.getValue [1] 0 parsResult.captured)  is
-            (Ok pat1,Ok pat2) ->
-                when (pat1, pat2) is 
-                    (['s'],['e'])->
-                        Ok { config & limit : List.append config.limit (FromLineToLine  1 -1) }
-                    (['s'],val)->
-                        Ok { config & limit : List.append config.limit (FromLineToLine  1 (Utils.asciiArrayToNumber val Str.toI32)) }
-                    (val,['e'])->
-                        Ok { config & limit : List.append config.limit (FromLineToLine  (Utils.asciiArrayToNumber val Str.toI32) -1) }
-                    (valStart,valEnd)->
-                        Ok { config & limit : List.append config.limit (FromLineToLine  (Utils.asciiArrayToNumber valStart Str.toI32)  (Utils.asciiArrayToNumber valEnd Str.toI32)) }
-                    _ ->
-                        Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
-            _ -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
-    
-    
+
 mergeConfigs : ConfigType, ConfigType  -> ConfigType
 mergeConfigs = \configDest, newConfig ->
     updateCommand  = 
@@ -642,144 +580,6 @@ mergeConfigs = \configDest, newConfig ->
             modifiers: mergedmodifiers,
     }
 
-    
-handleOthers : ParsingResultType, ConfigType -> Result ConfigType Str
-handleOthers = \  parsResult, config ->
-    when (Regex.getValue [0, 0] 0 parsResult.captured,
-        Regex.getValue [0, 1] 0 parsResult.captured ) is
-        (Ok modifiers, Ok pattern) ->
-            # bit arbitrary and messy but consider that wrong command is just allow pattern, (later meybe change  this to show warning)
-            if List.isEmpty modifiers == Bool.true then
-                Ok { config & patterns : List.append config.patterns (Allow (Plain (Utils.utfToStr pattern))) }
-            else if List.isEmpty pattern == Bool.true then
-                Ok { config & patterns : List.append config.patterns (Allow (Plain (Utils.utfToStr modifiers))) }
-            else
-                modifierAnalysis (Utils.utfToStr modifiers) (State.createConfigInstance [] None (Set.empty {}) [Allow (Plain (Utils.utfToStr pattern))] )
-                |> ( \ partialConfigResult ->
-                    merged = 
-                        modifiers
-                        |> List.concat pattern
-                        |> Utils.utfToStr
-                    when partialConfigResult is 
-                        Ok partialConfig ->
-                            # merge current subcommand to config
-                            if partialConfig.command == None then
-                                Ok {config & patterns : List.append config.patterns (Allow (Plain merged))}
-                            else
-                                Ok (mergeConfigs config  partialConfig)
-                        Err message -> 
-                            Err ("Error when processing \(Utils.utfToStr parsResult.matched) comand")
-                )
-        _ -> Err "Error when processing \(Utils.utfToStr parsResult.matched) comand"
-
-modifiersHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
-modifiersHandlers =
-    Dict.empty {}
-    |> Dict.insert "^[cC]" colorTag
-    |> Dict.insert "^[rR]" regex
-    |> Dict.insert "^(\\^)(\\d+)" createSection
-    |> Dict.insert "^(>)(\\d+)" createSection
-    |> Dict.insert "^(<)(\\d+)" createSection
-    |> Dict.insert "^[bB]" createBlackListed
-
-
-modifierAnalysis : Str, ConfigType -> Result ConfigType Str
-modifierAnalysis = \ word, inState -> 
-    if Str.isEmpty  word then 
-        Ok inState
-    else  
-        Dict.keys modifiersHandlers
-        |> List.walkUntil (Ok inState) (\ state, pattern ->
-            when state  is 
-                Ok config ->
-                        when Regex.parseStrMagic word pattern inState.regexMagic is 
-                            Ok parsed ->
-                                if parsed.matchFound == Bool.true then
-                                    when Dict.get modifiersHandlers pattern  is
-                                        Ok handler ->
-                                            modifiedConfResult = handler parsed config
-                                            when modifiedConfResult is
-                                                Ok modifiedConf -> Break (modifierAnalysis (Utils.utfToStr parsed.left) modifiedConf)
-                                                Err _ -> Break (Err "internal application error, during comand \(word) analysis")
-                                        Err _ -> 
-                                            Break (Err "internal application error, during comand \(word) analysis")
-                                else 
-                                    Continue state
-                            Err message -> Break (Err message)
-                    
-                Err message -> Break (Err message)
-        )
-        
-preventDoubleAND : Str, MagicType -> Bool
-preventDoubleAND = \ str, magic ->
-    when Regex.parseStrMagic str "[a][n][d]@" magic is 
-        Ok parsed ->
-            if parsed.matchFound == Bool.true then
-                when Regex.parseStrMagic (Utils.utfToStr parsed.left) "[a][n][d]@" magic is
-                    Ok secParse ->
-                        Bool.not secParse.matchFound
-                    Err _ -> 
-                        Bool.false
-            else 
-                Bool.true
-        Err _ -> Bool.false
-
-findCommandCandidate : List ParsingResultType, (Str, MagicType -> Bool), MagicType -> ParsingResultType
-findCommandCandidate = \  candidates, isSane, magic ->
-    if List.isEmpty candidates == Bool.true then 
-        Regex.createParsingRecord [] Inactive No
-    else 
-        # pick longest sane candidate
-        List.walk candidates (Regex.createParsingRecord [] Inactive No) (\ candidate, current  ->
-            if List.len candidate.matched < List.len current.matched && 
-               isSane (Utils.utfToStr current.matched) magic == Bool.true then
-                current
-            else
-                candidate
-        )
-
-commandsToHandlers : Dict Str ( ParsingResultType, ConfigType -> Result ConfigType Str)
-commandsToHandlers =
-    Dict.empty {}
-    |> Dict.insert "^[Nn][Ll]@\\s" createNumberLines
-    #|> Dict.insert "dsdsa" (\ type, config -> andMode type, config )  # those lines create cycles I am not sure they should be  
-    #|> Dict.insert "dsdsa"  andMode 
-    |> Dict.insert "^([Rr])?@(.+)->([Rr])?@(\\S+)\\s" createPatternToPattern
-    |> Dict.insert "^(\\d+|s)->(\\d+|e)@\\s" createLineToLine
-    |> Dict.insert "^(([^@]+@)?(\\S*)\\s)" handleOthers
-    
-simplifiedSyntax : Dict Str Str
-simplifiedSyntax = 
-    Dict.empty {}
-
-commandAnalysis : Str, ConfigType -> Result {config: ConfigType, left : Str} Str
-commandAnalysis = \ line, inConfig ->
-    cleanLine = Str.trimStart line
-    if Str.isEmpty cleanLine then
-        Ok {config: inConfig, left : cleanLine}
-    else 
-        Dict.keys commandsToHandlers
-        |> List.walkUntil (Ok {config: inConfig, left: "" }) (\ state, pattern ->
-            when state  is 
-                Ok {config: config,left: _} -> 
-                    when Regex.parseStrMagic (Str.trimStart line) pattern inConfig.regexMagic is
-                        Ok parsed -> 
-                            if parsed.matchFound == Bool.true then
-                                when Dict.get commandsToHandlers pattern  is
-                                    Ok handler ->
-                                        when (handler parsed config) is 
-                                            Ok outConfig -> 
-                                                Break (Err "command  \(line) evaluation error")
-                                                #Break (Ok {config: outConfig, left: Utils.utfToStr parsed.left })
-                                            Err _ -> Break (Err "command  \(line) evaluation error")
-                                    Err _ -> 
-                                        Break (Err "command  \(line) evaluation error")
-                            else 
-                                Continue state
-                        Err message -> Break (Err message)
-                Err message -> Break (Err message)
-            )
-
 recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \commandLst ->
     emptyConfig = (State.createConfigInstance [] Search (Set.empty {}) [] )
@@ -790,7 +590,7 @@ recoverConfigFromInput = \commandLst ->
             Str.joinWith  commandLst " "
             |> Str.concat  " "
             
-        when Commands.runParser joined  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
+        when Commands.runParser joined  { current : fullCommandMiniParser, data: { queue : [FullCommands], content : [] }, regexMagic : regexMagic }  is 
             Ok parserData ->
                 Commands.updateConfig emptyConfig parserData.content
             Err mess -> Err mess 
