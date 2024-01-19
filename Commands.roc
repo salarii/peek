@@ -34,10 +34,12 @@ SimpleType : Str
 
 OperationType : [
         Regex, 
-        Allow, 
+        #Allow, 
         Blacklist, 
         Color, 
-        LogicalAnd, ] 
+        LogicalAnd,
+        FromLineToLine  I32 I32,
+        NumberLines ] 
 
 ParserConfigType : { exclusive: Dict OperationType (List OperationType), options : Set OperationType }
 
@@ -65,7 +67,6 @@ insertTag = \ _parsed, miniParserData, operation ->
         ParserConfig configType -> 
             when Dict.get configType.exclusive operation is 
                 Ok exclusiveLst -> 
-                   
                     List.walkUntil exclusiveLst Bool.false (\ status, tag -> 
                         if Set.contains configType.options tag == Bool.true then
                             Break Bool.true
@@ -113,6 +114,14 @@ configHandlers =
     |> Dict.insert "^[a][n][d]" logicalANDHandler
     |> Dict.insert "^@" concludeHandler
 
+configANDHandlers : Dict Str (ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str)
+configANDHandlers =
+    Dict.empty {}
+    |> Dict.insert "^[rR]" regexHandler
+    |> Dict.insert "^[bB]" blackListedHandler
+    |> Dict.insert "^@" concludeHandler
+    
+    
 fullCommandsHandlers : Dict Str (ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str)
 fullCommandsHandlers =
     Dict.empty {}
@@ -174,6 +183,9 @@ configData =
 
 configMiniParser =  { handlers: configHandlers, data :  ParserConfig configData, left : "" }
 
+configANDParser =  { handlers: configANDHandlers, data :  ParserConfig configData, left : "" }
+
+
 conditionHit : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
 conditionHit = \ parsed, data -> 
     Ok (Completed ( Condition parsed.matchFound ) )
@@ -192,17 +204,25 @@ evaluate = \ data, parser ->
                             current : configMiniParser,
                             data : { queue : updatedQueue |> List.prepend Config, content : parser.data.content } }
 
-                (FromLineToLine  _ _) | NumberLines ->
+                (FromLineToLine  val1 val2) ->
+                    content = List.append  parser.data.content { config: Set.empty {} |> Set.insert (FromLineToLine  val1 val2), pattern : "" }
                     Ok
                         { parser &
                             current : fullCommandMiniParser,
-                            data : { queue : updatedQueue |> List.prepend FullCommands, content : parser.data.content } }
-                _ -> Err  "unknown problem with command processing" 
+                            data : { queue : updatedQueue |> List.prepend FullCommands, content : content } }
+                NumberLines ->
+                    content = List.append  parser.data.content { config: Set.empty {} |> Set.insert NumberLines, pattern : "" }
+                    Ok
+                        { parser &
+                            current : fullCommandMiniParser,
+                            data : { queue : updatedQueue |> List.prepend FullCommands, content : content } }
+                _ ->
+                    Err  "unknown problem with command processing" 
         Simple simpleData ->
             when parser.data.queue is 
                 [AndPattern, ..] ->
                     when parser.data.content is
-                        [] ->  
+                        [] -> 
                             Err  "unknown problem with command processing" 
                         [.. as head, last] ->
                             elems = List.append head { last & pattern : simpleData }
@@ -212,7 +232,7 @@ evaluate = \ data, parser ->
                                     data : { queue : updatedQueue |> List.prepend EndAnd, content : elems } }
                 [Pattern,..] ->
                     when parser.data.content is
-                        [] ->  
+                        [] ->
                             Err  "unknown problem with command processing" 
                         [.. as head, last] ->
                             elems = List.append head { last & pattern : simpleData }
@@ -222,48 +242,42 @@ evaluate = \ data, parser ->
                                     data : { queue : updatedQueue |> List.prepend Config, content : elems } }
                 _ -> 
                     Err "not implemented" 
-        ParserConfig configDataProcessed ->                
-            if Set.isEmpty configDataProcessed.options then
-                when parser.data.queue is 
-                    [AndConfig, ..] -> 
-                        Ok  
-                            { parser &
-                                current : { handlers: simpleHandlers, data : Simple  "", left : "" },
-                                data : { queue : (updatedQueue |> List.prepend AndPattern), content : parser.data.content} } 
-                    [Config, ..] ->
-                        content = List.append  parser.data.content { config: Set.empty {}, pattern : "" }
-                        Ok
-                            { parser &
-                                current : { handlers: simpleHandlers, data : Simple  "", left : "" },
-                                data : { queue : (updatedQueue |> List.prepend Pattern), content : content} } 
-                    _ -> 
-                        Err "unknown problem with command processing"    
-            else
-                #  remember to fix queue
+        ParserConfig configDataProcessed ->
                 updateParser : ParserType, OperationType -> ParserType
                 updateParser = \ inParser, operation ->
                     when inParser.data.content  is 
                     [] ->  
                         inParser 
                     [.. as head, last] ->
-                        elem = { config: last.config |> Set.insert operation, pattern : "" }  
+                        elem = { config: last.config |> Set.insert operation, pattern : last.pattern }  
                         { inParser &
                             data : { queue : inParser.data.queue, content : (List.append head elem)} }
-        
+                content = List.append  parser.data.content { config: Set.empty {}, pattern : "" }
                 (if Set.contains configDataProcessed.options LogicalAnd == Bool.true then
-
+                    #content = List.append  parser.data.content { config: Set.empty {} |> Set.insert LogicalAnd, pattern : "" }
                     entryHandlers =
                         Dict.empty {}
                         |> Dict.insert "^\\("  conditionHit
                     { parser &
                             current : { handlers: entryHandlers, data : Condition Bool.false, left : "" },
-                            data : { queue : [OpenAnd], content : parser.data.content } }
+                            data : { queue : [OpenAnd], content : content } }
                 else
-                    content = List.append  parser.data.content { config: Set.empty {}, pattern : "" }
-                    { parser &
-                        current : { handlers: simpleHandlers, data : Simple  "", left : "" },
-                        data : { queue : (updatedQueue |> List.prepend Pattern), content : content} } 
+                    when parser.data.queue is   
+                        [AndConfig, ..] -> 
+                            { parser &
+                                    current : { handlers: simpleHandlers, data : Simple  "", left : "" },
+                                    data : { queue : (updatedQueue |> List.prepend AndPattern), content : content} } 
+                        [Config, ..] ->
+                            { parser &
+                                    current : { handlers: simpleHandlers, data : Simple  "", left : "" },
+                                    data : { queue : (updatedQueue |> List.prepend Pattern), content : content} }  
+                        _ -> parser 
                 )
+                |> ( \ inProcessParser -> 
+                    if Set.contains configDataProcessed.options LogicalAnd == Bool.true then 
+                        (updateParser inProcessParser LogicalAnd)
+                    else 
+                        inProcessParser )
                 |> ( \ inProcessParser -> 
                     if Set.contains configDataProcessed.options Regex == Bool.true then 
                         (updateParser inProcessParser Regex)
@@ -287,29 +301,42 @@ evaluate = \ data, parser ->
                         { parser &
                             current : { handlers: closeANDHandlers, data : Condition Bool.false, left : "" },
                             data : { queue : updatedQueue |> List.prepend EndAnd, content : parser.data.content } }
-                
+                [AndConfig, ..] -> 
+                    content = List.append  parser.data.content { config: Set.empty {}, pattern : "" }
+                    Ok
+                        { parser &
+                                    current : { handlers: simpleHandlers, data : Simple  "", left : "" },
+                                    data : { queue : (updatedQueue |> List.prepend AndPattern), content : content } } 
+                [Config, ..] ->
+                    content = List.append  parser.data.content { config: Set.empty {}, pattern : "" }
+                    Ok
+                        { parser &
+                                    current : { handlers: simpleHandlers, data : Simple  "", left : "" },
+                                    data : { queue : (updatedQueue |> List.prepend Pattern), content : content } } 
+                [FullCommands, ..] ->
+                            Ok
+                                { parser &
+                                    current : configMiniParser,
+                                    data : { queue : updatedQueue |> List.prepend Config, content : parser.data.content } }
                 [EndAnd, .. as tail] -> 
                     if cond == Bool.true then 
                         if List.isEmpty parser.data.content then 
                             Err "error in and command, empty pattern section"
                         else
-                            when tail is 
-                                [] ->
-                                    Ok {parser & data : { queue : [], content : parser.data.content }  }   
-                                _ -> 
-                                    evaluate data  {parser & data : { queue : [], content : parser.data.content }  }
+                            content = List.append parser.data.content { config: Set.empty {}|> Set.insert LogicalAnd, pattern : "Stop" }
+                            Ok
+                                { parser &
+                                    current : fullCommandMiniParser,
+                                    data : { queue : updatedQueue |> List.prepend FullCommands, content : content } }
+                            # when tail is 
+                            #     [] ->
+                            #         Ok {parser & data : { queue : [], content : parser.data.content }  }   
+                            #     _ -> 
+                            #         evaluate data  {parser & data : { queue : [], content : parser.data.content }  }
                     else 
-                        andHandlers =
-                            Dict.empty {}
-                            |> Dict.insert "^[rR]" regexHandler
-                            |> Dict.insert "^[bB]" blackListedHandler
-                            |> Dict.insert "^@" concludeHandler
-                            
-                        andConfigData = { exclusive: Dict.empty {}, options : Set.empty {} }
-                        content = List.append parser.data.content { config: Set.empty {}, pattern : "" }
                         Ok { parser &
-                            current : { handlers: andHandlers, data : ParserConfig andConfigData, left : "" },
-                            data : { queue : updatedQueue |> List.prepend AndConfig, content : content } }
+                            current : configANDParser,
+                            data : { queue : updatedQueue |> List.prepend AndConfig, content : parser.data.content } }
                 _ -> 
                     Err "unknown problem with command processing"
 
@@ -328,10 +355,11 @@ runParser = \ input, parser ->
             # else
                 Err "error while processing command"
         else
+            config = miniParser
             Dict.keys miniParser.handlers
-            |> List.walkUntil (Ok miniParser) (\ state, pattern ->
+            |> List.walkUntil (Ok {miniParser & data : Condition Bool.false} ) (\ state, pattern ->
                 when state  is 
-                    Ok config ->
+                    Ok _ ->
                         when Regex.parseStrMagic feed pattern parser.regexMagic is 
                             Ok parsed ->
                                 if parsed.matchFound == Bool.true then
@@ -345,12 +373,13 @@ runParser = \ input, parser ->
                                                             Break (loopCommand (Utils.utfToStr parsed.left) {config & data : parsData })  
                                                         Completed parsData ->
                                                             Break ( Ok {config & data : parsData, left : Utils.utfToStr parsed.left })
-                                                        Error -> Continue ( Ok {miniParser & left : input})
+                                                        Error -> 
+                                                            Continue ( Ok {miniParser & data : Condition Bool.false, left : input})
                                                 Err _ -> Break (Err "error while processing \(input)")
                                         Err _ -> 
                                             Break (Err "internal application error, during comand \(input) analysis")
                                 else 
-                                    Continue (Ok {config & left : input})
+                                    Continue (Ok {config & data : Condition Bool.false, left : input})
                             Err message -> Break (Err message)
                     Err message -> Break (Err message)
                     )
@@ -358,18 +387,36 @@ runParser = \ input, parser ->
     |> ( \ parsedResult ->
         when parsedResult is 
             Ok  parsed -> 
-                when evaluate parsed.data parser  is
+                when evaluate parsed.data parser is
                     Ok alteredParser ->
+                        
                         if #isParserCompleted alteredParser.data || 
                             Str.isEmpty (Str.trimStart parsed.left) then
                             # validate if parsing correct
                             Ok alteredParser.data
-                        else 
+                        else
                             runParser parsed.left alteredParser
                     Err message -> Err message  
 
             Err message -> Err message  )                
     
+andTypesConversion : [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]] -> PatternType 
+andTypesConversion = \ type ->
+    when type is 
+        Allow (Plain str) -> Allow (Plain str) 
+        Allow (Regex str) -> Allow (Regex str)
+        Blacklist (Plain str) -> Blacklist (Plain str)
+        Blacklist (Regex str) -> Blacklist (Regex str)
+
+andTypesConversionBack : PatternType -> Result [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]] Str
+andTypesConversionBack = \ type ->
+    when type is 
+        Allow (Plain str) -> Ok (Allow (Plain str))
+        Allow (Regex str) -> Ok (Allow (Regex str))
+        Blacklist (Plain str) -> Ok (Blacklist (Plain str))
+        Blacklist (Regex str) -> Ok (Blacklist (Regex str))
+        _ -> Err "conversion impossible"
+
 updateConfig : ConfigType, List ParserOutType -> Result ConfigType Str
 updateConfig = \ config, parserDataLst ->
     if List.isEmpty parserDataLst == Bool.true then
@@ -380,52 +427,118 @@ updateConfig = \ config, parserDataLst ->
             |> Dict.insert Color colorUpdate
             |> Dict.insert Regex regexUpdate
             |> Dict.insert Blacklist blacklistUpdate
+            |> Dict.insert LogicalAnd andUpdate
                     
-        goOverOptions: List OperationType, PatternType -> Result PatternType Str
-        goOverOptions = \ operationLst, pattern ->            
-            List.walkTry operationLst pattern ( \ state, type ->
-                when Dict.get  modifHandlers type is 
-                    Ok handler ->
-                        handler state
-                    Err _ -> Err "unknown problem during command processing" )
+        modifyPattern: OperationType, PatternType -> Result [Pattern PatternType] Str
+        modifyPattern = \ operation, pattern ->            
+            when Dict.get  modifHandlers operation is 
+                Ok handler ->
+                    when handler pattern is 
+                        Ok pat -> Ok (Pattern pat)
+                        Err _ -> Err "wrong usage of command"
+                Err _ -> Err "unknown problem during command processing"
 
-        # bit ugly (state, overall apperance)
-        ( List.walkUntil parserDataLst (parserDataLst, Err "missing command data") (\ state, data ->
-            if Set.contains data.config LogicalAnd then
-                if data.pattern == "Stop" then
-                    Break ( List.dropFirst state.0 1, state.1 )
-                else 
-                    (goOverOptions  
-                        (Set.toList (Set.remove data.config LogicalAnd) )
-                        ( Allow (LogicalAnd []) ) )
-                    |> (\ result -> 
-                        Continue ( List.dropFirst state.0 1, result ) )
-            else  
-                if Str.isEmpty data.pattern then
-                    Break (state.0, Err "unknown problem during command processing" )
-                else 
-                    curPattern = 
-                        when state.1 is 
-                            Ok pattern -> 
-                                pattern
-                            Err _ -> Allow (Plain data.pattern)
-                    when goOverOptions (Set.toList data.config) curPattern is
-                                Ok  updatedPattern ->
-                                    when updatedPattern is  
-                                        Allow (LogicalAnd _) | Blacklist (LogicalAnd _)  -> 
-                                            Continue (List.dropFirst state.0 1, (Ok updatedPattern))
-                                        _ -> Break (List.dropFirst state.0 1, (Ok updatedPattern))
-                                Err message -> Break (List.dropFirst state.0 1, (Err message)) 
-                    ))
-        |> (\ patternResult ->
-            when patternResult.1 is
-                Ok pattern -> 
-                    (if config.command == None then
-                        {config & command : Search, patterns : List.append config.patterns pattern}
-                    else
-                        {config & patterns : List.append config.patterns pattern})
-                    |> updateConfig patternResult.0
-                Err message -> Err message
+        ( List.walkUntil parserDataLst (Ok (parserDataLst, None)) (\ state, data ->
+            when state is 
+                Ok current ->
+                    (if Set.contains data.config LogicalAnd &&
+                       data.pattern == "Stop" then
+                       Break (Ok ( List.dropFirst current.0 1, current.1 ))
+                    else   
+                    updated = 
+                        if Str.isEmpty data.pattern == Bool.true then
+                            current.1
+                        else 
+                            when current.1 is 
+                                None -> 
+                                    (Pattern (Allow (Plain data.pattern)))
+                                (Pattern (Allow (LogicalAnd lst))) ->
+                                    (Pattern (Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))))
+                                (Pattern (Blacklist (LogicalAnd lst))) -> 
+                                    (Pattern (Blacklist (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))))
+                                _ -> current.1
+                    (List.walkTry (Set.toList data.config) updated (\ inState, type  ->
+                        when inState  is 
+                            None ->
+                                when type is 
+                                    Regex | Blacklist | Color | LogicalAnd ->
+                                        modifyPattern type (Allow (Plain data.pattern))
+                                    NumberLines ->
+                                        Ok (Modifier NumberLines)
+                                    FromLineToLine  from to -> 
+                                        Ok (Limit [FromLineToLine  from to])                                    
+                            Pattern pat ->
+                                when pat is 
+                                    (Allow (LogicalAnd lst)) ->
+                                        when lst is
+                                            [] -> Err "unknown problem during command processing" 
+                                            [.. as head, last ] -> 
+                                                when modifyPattern type (andTypesConversion last) is 
+                                                    Ok (Pattern modifiedPat) ->
+                                                        when andTypesConversionBack modifiedPat is 
+                                                            Ok convertPat -> 
+                                                                Ok (Pattern (Allow (LogicalAnd (List.append head convertPat))))
+                                                            Err message -> Err "unknown problem during command processing"
+                                                    Err message -> Err message 
+                                           
+                                    (Blacklist (LogicalAnd lst)) ->
+                                        when lst is
+                                            [] -> Err "unknown problem during command processing" 
+                                            [.. as head, last ] -> 
+                                                when modifyPattern type (andTypesConversion last) is 
+                                                    Ok (Pattern modifiedPat) ->
+                                                        when andTypesConversionBack modifiedPat is 
+                                                            Ok convertPat -> 
+                                                                Ok (Pattern (Blacklist (LogicalAnd (List.append head convertPat))))
+                                                            Err message -> Err "unknown problem during command processing"
+                                                    Err message -> Err message 
+                                    _ -> 
+                                        when type is 
+                                            Regex | Blacklist | Color | LogicalAnd ->
+                                                modifyPattern type pat
+                                            _ ->
+                                                Err "unknown problem during command processing"
+                            Modifier _ ->
+                                Err "unknown problem during command processing"
+                            Limit lst ->
+                                Err "unknown problem during command processing"))
+                                # when type is 
+                                #     FromLineToLine  from to -> Ok (Limit (List.append lst (FromLineToLine  from to)))
+                                #     _ -> Err "unknown problem during command processing"))
+                    |> (\ processedResult -> 
+                        when processedResult is 
+                            Ok processed ->
+                                when processed is 
+                                    (Pattern (Allow (LogicalAnd _))) | (Pattern (Blacklist (LogicalAnd _))) ->
+                                        if Set.contains data.config LogicalAnd then
+                                            Continue (Ok ( List.dropFirst current.0 1, processed ))
+                                        else 
+                                            Continue (Ok ( List.dropFirst current.0 1, processed )) 
+                                    _ ->
+                                        Break (Ok ( List.dropFirst current.0 1, processed ))
+                            Err message -> Break (Err message)
+                        ))
+                Err message -> Break (Err message)
+            ))
+        |> (\ processedResult ->
+            when processedResult is
+                Ok processed ->
+                    (when processed.1 is 
+                        None ->
+                            config
+                            #Err "something is not implemented "   
+                        Pattern pat ->
+                            dbg  pat
+                            if config.command == None then
+                                {config & command : Search, patterns : List.append config.patterns pat}
+                            else
+                                {config & patterns : List.append config.patterns pat}    
+                        Modifier modif ->
+                            {config & modifiers : Set.insert config.modifiers modif}
+                        Limit lst ->
+                            {config & limit : List.concat config.limit lst})
+                    |> updateConfig processed.0
+                Err message -> Err message                
         )          
 
 # mergeConfigs : ConfigType, ConfigType  -> ConfigType
@@ -476,6 +589,17 @@ regexUpdate = \ pattern ->
             Ok (Color (Regex pat))
         Blacklist (Plain pat) ->
             Ok (Blacklist (Regex pat))
+        _ -> Err "unsupported option"
+
+andUpdate : PatternType -> Result PatternType Str
+andUpdate = \ pattern ->
+    when pattern is
+        Allow (Plain pat) ->
+            Ok (Allow (LogicalAnd []))
+        Color (Plain pat) ->
+            Err "unsupported option"
+        Blacklist (Plain pat) ->
+            Ok (Blacklist (LogicalAnd []))
         _ -> Err "unsupported option"
 
 createSection : ParsingResultType, ConfigType -> Result ConfigType Str

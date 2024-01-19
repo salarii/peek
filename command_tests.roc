@@ -32,7 +32,7 @@ main =
 
          
     w =
-        when Commands.runParser " fsdfs  rc@sfsdf  b@sffsd "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
+        when Commands.runParser "and@( fsdfs  rc@sfsdf  b@sffsd ) cassio  cr@RenoD and@( fsdfs  rc@sfsdf  b@sffsd )"  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
         #when Commands.runParser " and@( fsdfs  r@sfsdf  b@sffsd ) "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
             Ok  parserData ->
                 configResult = Commands.updateConfig (State.createConfigInstance [] None (Set.empty {}) [] ) parserData.content
@@ -47,7 +47,7 @@ main =
                             message 
                 ""
             Err mess -> 
-                dbg  "error"
+                dbg  mess
                 mess 
     
     Stdout.write  "the goal ofthis unit is to test Commands.roc"
