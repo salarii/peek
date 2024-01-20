@@ -28,12 +28,10 @@ main =
 #     |> Dict.insert "^([Rr])?@(.+)->([Rr])?@(\\S+)\\s" createPatternToPattern
 #     |> Dict.insert "^(\\d+|s)->(\\d+|e)@\\s" createLineToLine
 #     |> Dict.insert "^(([^@]+@)?(\\S*)\\s)" handleOthers
-
-
-         
+     
     w =
-        when Commands.runParser "and@( fsdfs  rc@sfsdf  b@sffsd ) cassio  cr@RenoD and@( fsdfs  rc@sfsdf  b@sffsd )"  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
-        #when Commands.runParser " and@( fsdfs  r@sfsdf  b@sffsd ) "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
+        when Commands.runParser "br@gggg  ^3and@( kkkk b@ggg   ) <3r@kjj "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
+        #when Commands.runParser "and@( fsdfs  rc@sfsdf  b@sffsd ) cassio  cr@RenoD and@( fsdfs  rc@sfsdf  b@sffsd )"  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is 
             Ok  parserData ->
                 configResult = Commands.updateConfig (State.createConfigInstance [] None (Set.empty {}) [] ) parserData.content
                 hh =
