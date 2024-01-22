@@ -16,8 +16,8 @@ LineAnalyzedType : { content : List  Str, separator : List  Str }
 
 LineProcessedType : { number : U32 , line : LineAnalyzedType, content : Str, status : LineSearchResultType}
 
-mergeLineProcessed : List LineProcessedType, List LineProcessedType, Set PatternType -> List LineProcessedType
-mergeLineProcessed = \ leftLst, rightLst, keep ->
+mergeLineProcessed : List LineProcessedType, List LineProcessedType -> List LineProcessedType
+mergeLineProcessed = \ leftLst, rightLst ->
     merged =
         List.concat leftLst rightLst
         |> List.sortWith ( \ left, right ->
@@ -25,14 +25,14 @@ mergeLineProcessed = \ leftLst, rightLst, keep ->
                 GT
             else if left.number == right.number then
                 EQ
-            else  
+            else
                 LT)
-        #  bit ugly but needed at least for now 
-        |> List.walk ( 0,[]) (\ state, line -> 
-            if line.number != state.0 then 
+        #  bit ugly but needed at least for now
+        |> List.walk ( 0,[]) (\ state, line ->
+            if line.number != state.0 then
                 (line.number, List.append state.1 line)
-            else 
-                when List.last state.1 is 
+            else
+                when List.last state.1 is
                     Ok last ->
                         (state.0, Utils.modifyLastInList state.1 { last & status : mergeStatus last.status line.status })
                     _ -> state
@@ -41,23 +41,23 @@ mergeLineProcessed = \ leftLst, rightLst, keep ->
 
 coloring : List LineProcessedType, ConfigType -> Result (List LineProcessedType ) Str
 coloring = \ lines, config ->
-    gatherColors = 
-        List.walk config.patterns (Set.empty {}) (\state,  pattern -> 
-            when pattern is 
+    gatherColors =
+        List.walk config.patterns (Set.empty {}) (\state,  pattern ->
+            when pattern is
                 Color _->
                     Set.insert state pattern
-                _ -> 
-                    state ) 
+                _ ->
+                    state )
 
     colored =
         List.map  lines (\ line->
             Set.walk gatherColors (Ok line) (\ stateResult, pattern ->
-                when stateResult is 
+                when stateResult is
                     Ok state ->
-                        when searchPattern line.content pattern config is 
-                            Ok searchResult -> 
+                        when searchPattern line.content pattern config is
+                            Ok searchResult ->
                                 if searchResult.status != Miss then
-                                    
+
                                     Ok { state & line : mergeColors [state.line, searchResult.line] }
                                 else
                                     Ok state
@@ -65,46 +65,46 @@ coloring = \ lines, config ->
                     Err message -> Err message
                 ))
     (List.walkUntil colored (Bool.false, "") ( \ isErrorFlag, result ->
-            when  result is 
+            when  result is
                 Ok _ -> Continue isErrorFlag
                 Err message -> Break (Bool.false, message)
             ))
-    |> (\ coloringResult -> 
+    |> (\ coloringResult ->
         if coloringResult.0 == Bool.true then
-            Err coloringResult.1 
-        else 
+            Err coloringResult.1
+        else
             Ok (List.map colored (\ lineColRes ->
-                when lineColRes is 
+                when lineColRes is
                    Ok coloredLine -> coloredLine
                    Err _ -> { number : 0, line : { content : [], separator : [] }, content : "", status : Miss }
                 )
-            ))  
-       
+            ))
+
 createRawOut : List Str, List LineProcessedType -> Result  Str  Str
 createRawOut = \ rawLst, outLst ->
     List.map outLst ( \line -> line.number )
     |> List.walkTry  "" ( \ outStr, idx ->
-        when List.get rawLst (Num.toNat (idx-1)) is 
-            # when I have done this by accident it crashed 
+        when List.get rawLst (Num.toNat (idx-1)) is
+            # when I have done this by accident it crashed
             # Ok rawLine ->
             #         Str.concat outStr rawLine
-            #         |> Str.concat "\n"                    
+            #         |> Str.concat "\n"
             Ok rawLine ->
                 Ok (
                     Str.concat outStr rawLine
-                    |> Str.concat "\n"                    
+                    |> Str.concat "\n"
                 )
             Err _ -> Err "problem in processing output" )
-            
+
 evalSearch : List Str, ConfigType -> { terminal: Str, raw : Str }
 evalSearch = \ content, config ->
     numIdxLen = Utils.strUtfLen( Num.toStr (List.len content) )
-    printLine :  LineProcessedType, (Bool, Nat) -> Str 
-    printLine = \ processed, printLineNumber -> 
-        if printLineNumber.0 == Bool.true then 
-            lineNumber = 
-                Num.toStr  processed.number 
-                |> Utils.fillSpacesUpTo printLineNumber.1         
+    printLine :  LineProcessedType, (Bool, Nat) -> Str
+    printLine = \ processed, printLineNumber ->
+        if printLineNumber.0 == Bool.true then
+            lineNumber =
+                Num.toStr  processed.number
+                |> Utils.fillSpacesUpTo printLineNumber.1
             ""
             |> Str.concat lineNumber
             |> Str.concat (produceOutput processed.line)
@@ -118,9 +118,9 @@ evalSearch = \ content, config ->
 
     if List.isEmpty content == Bool.true then
         { terminal: "", raw : "" }
-    else 
-        # this  should  be  done  in some other place
-        lineNembersAdded = List.walk content ([],1) (\state,  line -> 
+    else
+        # this  should  be  done  in some other place??
+        lineNembersAdded = List.walk content ([],1) (\state,  line ->
             # I have done by accident and this crashed compiler
             #  (List.append state.1  {number : state.1, line : line }, state.2 + 1 )
                 if List.isEmpty config.limit == Bool.true then
@@ -136,27 +136,27 @@ evalSearch = \ content, config ->
                                 Continue isIn
                         )
                     if inSection == Bool.true then
-                        (List.append state.0  {number : state.1, line : line }, state.1 + 1 )        
+                        (List.append state.0  {number : state.1, line : line }, state.1 + 1 )
                     else
                         (state.0, state.1 + 1 )
             )
-        
-        when config.command is 
-            Search -> 
+
+        when config.command is
+            Search ->
                 List.walkTry lineNembersAdded.0 [] (\ register, line->
                     analyseLine line config.patterns register config
                 )
                 |> ( \searchResult ->
                     when searchResult is
                         Ok searched ->
-                            when coloring searched config is 
+                            when coloring searched config is
                                 Ok colored ->
-                                    when createRawOut content colored  is 
-                                        Ok rawStr -> 
-                                            { 
+                                    when createRawOut content colored  is
+                                        Ok rawStr ->
+                                            {
                                                 terminal:
                                                     List.walk colored "" (\ out, item ->
-                                                        out 
+                                                        out
                                                         |>Str.concat (printLine item (Set.contains  config.modifiers NumberLines, numIdxLen + 1))
                                                     ),
                                                 raw : rawStr
@@ -175,37 +175,37 @@ evalSearch = \ content, config ->
                     List.walkTry lineNembersAdded.0 [] (\ register, line->
                         analyseLine line [fromPat, toPat] register config
                     )
-                when (patternsProcessedResult, rangesProcessedResult )  is 
+                when (patternsProcessedResult, rangesProcessedResult )  is
                     (Ok patternsProcessed, Ok ranges ) ->
-                        mergeLineProcessed patternsProcessed ranges (Set.fromList [fromPat, toPat])
+                        mergeLineProcessed patternsProcessed ranges
                         |> List.walk (Block,[],[]) (\state, line ->
-                            when line.status is 
-                                Hit patterns -> 
+                            when line.status is
+                                Hit patterns ->
                                     if Set.contains patterns fromPat == Bool.true then
                                         if state.0 == Allow then
-                                            when List.first state.1 is 
-                                                Ok head -> 
+                                            when List.first state.1 is
+                                                Ok head ->
                                                     (Allow,[line],List.append state.2 [head])
                                                 Err _ -> state
-                                        else 
+                                        else
                                             (Allow,[line],state.2)
                                     else if Set.contains patterns toPat == Bool.true then
                                         if state.0 == Allow then
                                             (Block,[],List.append state.2 (List.append state.1 line))
-                                        else 
+                                        else
                                             (Block,[],List.append state.2 [line])
                                     else
                                         if state.0 == Allow then
                                             (Allow,List.append state.1 line, state.2 )
-                                        else 
+                                        else
                                             state
-                                Miss -> 
+                                Miss ->
                                     if state.0 == Allow then
                                         (Allow,List.append state.1 line, state.2 )
-                                    else 
+                                    else
                                         state
                         )
-                        |> ( \ regions -> 
+                        |> ( \ regions ->
                             List.walkTry regions.2 "" (\ totalOut, region ->
                                 when coloring region config is
                                     Ok colored ->
@@ -214,19 +214,19 @@ evalSearch = \ content, config ->
                                                 out
                                                 |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
                                                 )
-                                                
-                                        Ok ( 
+
+                                        Ok (
                                             Str.concat totalOut regionOut
                                             |> Str.concat "\n\r-----------------------------\n\r "
                                             )
                                     Err message -> Err message
                             )
                             |> ( \ outStrResult ->
-                                when outStrResult is 
-                                    Ok outStr -> 
-                                        when createRawOut content (List.join regions.2)  is 
-                                            Ok rawStr -> 
-                                                { 
+                                when outStrResult is
+                                    Ok outStr ->
+                                        when createRawOut content (List.join regions.2)  is
+                                            Ok rawStr ->
+                                                {
                                                     terminal: outStr,
                                                     raw : rawStr
                                                 }
@@ -234,10 +234,10 @@ evalSearch = \ content, config ->
                                     Err message -> { terminal: message, raw : "" }
                                  )
                             )
-                                
+
                     (Err message , _ ) ->  { terminal: message, raw : "" }
                     (Ok _, Err message ) -> { terminal: message, raw : "" }
-            SearchSection sectionsLst ->        
+            SearchSection sectionsLst ->
                 patternsProcessed =
                     List.walkTry lineNembersAdded.0 [] (\ register, line->
                         analyseLine line config.patterns register config
@@ -247,12 +247,12 @@ evalSearch = \ content, config ->
                     List.walkTry lineNembersAdded.0  [] (\ register, line->
                             analyseLine line gatherPatterns register config
                     )
-                when (patternsProcessed, hotProcessed )  is 
+                when (patternsProcessed, hotProcessed )  is
                     (Ok patterns, Ok hot ) ->
-                        merged = mergeLineProcessed patterns hot (Set.fromList gatherPatterns)
+                        merged = mergeLineProcessed patterns hot
                         sections = filterSections merged sectionsLst
 
-                        List.walkTry sections "" (\ totalOut, sec -> 
+                        List.walkTry sections "" (\ totalOut, sec ->
                                 when coloring sec config is
                                     Ok colored ->
                                         sectionOut =
@@ -260,39 +260,39 @@ evalSearch = \ content, config ->
                                                 out
                                                 |> Str.concat (printLine line (Set.contains  config.modifiers NumberLines ,numIdxLen + 1))
                                                 )
-                                        Ok 
+                                        Ok
                                             (
                                                 Str.concat totalOut sectionOut
-                                                |> Str.concat "\n\r-----------------------------\n\r"  
+                                                |> Str.concat "\n\r-----------------------------\n\r"
                                             )
                                     Err message -> Err message
                             )
                         |> (( \ outStrResult ->
-                                when outStrResult is 
-                                    Ok outStr -> 
-                                        when createRawOut content (List.join sections)  is 
-                                            Ok rawStr -> 
-                                                { 
+                                when outStrResult is
+                                    Ok outStr ->
+                                        when createRawOut content (List.join sections)  is
+                                            Ok rawStr ->
+                                                {
                                                     terminal: outStr,
                                                     raw : rawStr
                                                 }
                                             Err message -> { terminal: message, raw : "" }
                                     Err message -> { terminal: message, raw : "" }
                                  )
-                            
-                            
+
+
                         )
                     (Err message , _ ) -> { terminal: message, raw : "" }
-                    (Ok _, Err message ) -> { terminal: message, raw : "" }        
+                    (Ok _, Err message ) -> { terminal: message, raw : "" }
             _ -> { terminal: "not supported yet", raw : "" }
 
-DecomposeType : 
+DecomposeType :
     {
         andDecomposedAllow : List { pattern: PatternType, decomposed : (Set PatternType, Set PatternType)},
         andDecomposedBlock : List { pattern: PatternType, decomposed : (Set PatternType, Set PatternType)},
     }
 decomposeEmpty : DecomposeType
-decomposeEmpty = 
+decomposeEmpty =
     {
         andDecomposedAllow : [],
         andDecomposedBlock : [],
@@ -300,73 +300,73 @@ decomposeEmpty =
 
 mergeStatus : LineSearchResultType, LineSearchResultType -> LineSearchResultType
 mergeStatus = \ leftStatus, rightStatus ->
-    when (leftStatus, rightStatus) is 
+    when (leftStatus, rightStatus) is
         (Hit patLstLast, Hit patLstLine) ->
             Hit ( Set.union  patLstLast patLstLine)
         (Hit _, Miss) | (Miss, Miss) ->
             leftStatus
         (Miss, Hit _) ->
-            rightStatus              
+            rightStatus
 
 
 sortPatterns : List PatternType -> DecomposeType
 sortPatterns = \ patterns ->
-    sortANDTail : List [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]] -> ( Set PatternType, Set PatternType ) 
+    sortANDTail : List [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]] -> ( Set PatternType, Set PatternType )
     sortANDTail = \ tailPatterns ->
-        List.walk tailPatterns (Set.empty {},Set.empty {}) ( \ inState, andPattern -> 
-            when  andPattern is 
-                Allow (Plain pat) -> 
+        List.walk tailPatterns (Set.empty {},Set.empty {}) ( \ inState, andPattern ->
+            when  andPattern is
+                Allow (Plain pat) ->
                     (Set.insert inState.0 (Allow (Plain pat)), inState.1)
-                Allow (Regex pat) ->  
+                Allow (Regex pat) ->
                     (Set.insert inState.0 (Allow (Regex pat)), inState.1)
                 Blacklist (Plain pat) ->
                     (inState.0, Set.insert inState.1 (Blacklist (Plain pat)))
-                Blacklist (Regex pat) -> 
+                Blacklist (Regex pat) ->
                     (inState.0, Set.insert inState.1 (Blacklist (Regex pat)))
                 _ -> inState
             )
 
-    List.walk patterns decomposeEmpty (\state,  pattern -> 
+    List.walk patterns decomposeEmpty (\state,  pattern ->
             when pattern is
-                Allow (LogicalAnd  patternLst) -> 
+                Allow (LogicalAnd  patternLst) ->
                     sortANDTail patternLst
-                    |> (\ andSet ->  
+                    |> (\ andSet ->
                         { state &
                             andDecomposedAllow : List.append state.andDecomposedAllow {pattern: pattern, decomposed : andSet},
                         } )
-                        
-                Blacklist (LogicalAnd  patternLst) -> 
+
+                Blacklist (LogicalAnd  patternLst) ->
                     sortANDTail patternLst
-                    |> (\ andSet ->  
+                    |> (\ andSet ->
                         { state &
                             andDecomposedBlock : List.append state.andDecomposedBlock {pattern: pattern, decomposed : andSet},
-                        } )            
+                        } )
                 Allow pat ->
-                    { state &  
+                    { state &
                         andDecomposedAllow : List.append state.andDecomposedAllow {pattern: pattern, decomposed : (Set.empty {} |> Set.insert pattern,Set.empty {})}
-                    } 
-                Blacklist pat -> 
-                    { state &  
+                    }
+                Blacklist pat ->
+                    { state &
                         andDecomposedBlock : List.append state.andDecomposedBlock {pattern: pattern, decomposed : (Set.empty {} |> Set.insert pattern,Set.empty {})}
                     }
                 _-> state
                 )
 
-analyseLine : LineInput, List PatternType, List LineProcessedType, ConfigType -> Result (List LineProcessedType) Str   
+analyseLine : LineInput, List PatternType, List LineProcessedType, ConfigType -> Result (List LineProcessedType) Str
 analyseLine = \ lineData, patterns, register, config ->
 
     miss = { number : lineData.number, line : { content : [lineData.line], separator : [] }, content: lineData.line,status : Miss }
-    
-    blackListSearch : List { pattern: PatternType, decomposed : (Set PatternType, Set PatternType)} -> Result LineProcessedType Str 
+
+    blackListSearch : List { pattern: PatternType, decomposed : (Set PatternType, Set PatternType)} -> Result LineProcessedType Str
     blackListSearch = \ decompBlock ->
         List.walkUntil decompBlock (Ok miss ) (\ stateResult, andSet ->
-            when stateResult is 
+            when stateResult is
                 Ok state ->
-                    (Set.walkUntil andSet.decomposed.0 (Ok miss) ( \ searchStateResult, pattern -> 
-                        when searchStateResult is 
+                    (Set.walkUntil andSet.decomposed.0 (Ok miss) ( \ searchStateResult, pattern ->
+                        when searchStateResult is
                             Ok searchState ->
-                                when searchPattern lineData.line pattern config is 
-                                    Ok searchResult -> 
+                                when searchPattern lineData.line pattern config is
+                                    Ok searchResult ->
                                         if searchResult.status != Miss then
                                             Break ( Ok { searchState & status : searchResult.status})
                                         else
@@ -374,30 +374,31 @@ analyseLine = \ lineData, patterns, register, config ->
                                     Err message -> Break (Err message)
                             Err message -> Break (Err message)
                         ))
-                        |> ( \ allowResult -> 
+                        |> ( \ allowResult ->
                             when allowResult is
                                 Ok allow ->
                                     if allow.status == Miss && Set.isEmpty andSet.decomposed.1 == Bool.true then
-                                        (Set.walkUntil andSet.decomposed.1 (Ok {miss & status : Hit (Set.empty {} |> Set.insert andSet.pattern)}) (\ searchStateResult, pattern -> 
-                                            when searchStateResult is 
+                                        (Set.walkUntil andSet.decomposed.1 (Ok {miss & status : Hit (Set.empty {} |> Set.insert andSet.pattern)}) (\ searchStateResult, pattern ->
+                                            when searchStateResult is
                                                 Ok searchState ->
-                                                    when searchPattern lineData.line pattern config is 
-                                                        Ok searchResult -> 
-                                                            if searchResult.status == Miss then 
+                                                    when searchPattern lineData.line pattern config is
+                                                        Ok searchResult ->
+                                                            if searchResult.status == Miss then
                                                                 Break ( Ok searchState )
                                                             else
                                                                 Continue ( Ok miss )
-                                                        Err message -> Break (Err message)                
+                                                        Err message -> Break (Err message)
                                                 Err message -> Break (Err message)
                                         ))
-                                    else 
+                                    else
                                         Ok allow
                                 Err message -> Err message
                                 )
-                    |> ( \ blockProcessed -> 
-                        when blockProcessed is 
+                    |> ( \ blockProcessed ->
+                        when blockProcessed is
                             Ok processed ->
-                                if processed.status == Miss then 
+                                dbg  processed
+                                if processed.status == Miss then
                                     Break ( Ok processed )
                                 else
                                     Continue ( Ok miss )
@@ -406,82 +407,87 @@ analyseLine = \ lineData, patterns, register, config ->
                 Err message -> Break (Err message))
 
     sortedPatterns = sortPatterns patterns
-    
-    if List.isEmpty sortedPatterns.andDecomposedAllow == Bool.false then
-        when blackListSearch sortedPatterns.andDecomposedBlock is 
-            Ok blockProcess -> 
+    if List.isEmpty sortedPatterns.andDecomposedAllow == Bool.true then
+        when blackListSearch sortedPatterns.andDecomposedBlock is
+            Ok blockProcess ->
                 if  blockProcess.status == Miss then
                     Ok (List.append register miss)
-                else 
+                else
                     Ok register
             Err message -> Err message
-    else 
-        allowStageResult = 
+    else
+        allowStageResult =
             List.walkUntil sortedPatterns.andDecomposedAllow (Ok miss ) (\ stateResult, andSet ->
-                when stateResult is 
+                when stateResult is
                     Ok state ->
-                        (Set.walkUntil andSet.decomposed.0 (Ok miss) ( \ searchStateResult, pattern -> 
-                            when searchStateResult is 
+                        (Set.walkUntil andSet.decomposed.0 (Ok state) ( \ searchStateResult, pattern ->
+                            when searchStateResult is
                                 Ok searchState ->
-                                    when searchPattern lineData.line pattern config is 
-                                        Ok searchResult -> 
+                                    when searchPattern lineData.line pattern config is
+                                        Ok searchResult ->
                                             if searchResult.status != Miss then
-                                                Continue ( Ok { searchState & line : mergeColors [searchState.line, searchResult.line], status : mergeStatus searchState.status searchResult.status})
+                                                Continue ( Ok { searchState & line : mergeColors [searchState.line, searchResult.line], status : searchResult.status})
                                             else
                                                 Break ( Ok  miss )
                                         Err message -> Break (Err message)
                                 Err message -> Break (Err message)
                             ))
-                        |> ( \ allowResult -> 
+                        |> ( \ allowResult ->
                             when allowResult is
                                 Ok allow ->
-                                    if allow.status != Miss then
-                                        (Set.walkUntil andSet.decomposed.1  (Ok miss)  ( \ searchStateResult, pattern -> 
-                                            when searchStateResult is 
+                                    if allow.status != Miss || (allow.status == Miss && Set.isEmpty andSet.decomposed.0 == Bool.true) then
+                                        (Set.walkUntil andSet.decomposed.1  (Ok miss)  ( \ searchStateResult, pattern ->
+                                            when searchStateResult is
                                                 Ok searchState ->
-                                                    when searchPattern lineData.line pattern config is 
-                                                        Ok searchResult -> 
+                                                    when searchPattern lineData.line pattern config is
+                                                        Ok searchResult ->
                                                             if searchResult.status == Miss then
                                                                 Continue ( Ok searchState )
                                                             else
                                                                 Break ( Ok {searchState & status : searchResult.status} )
-                                                        Err message -> Break (Err message)                
+                                                        Err message -> Break (Err message)
                                                 Err message -> Break (Err message)
                                                 ))
-                                        |>  ( \ blockResult -> 
-                                                when blockResult is 
-                                                    Ok block -> 
+                                        |>  ( \ blockResult ->
+                                                when blockResult is
+                                                    Ok block ->
                                                         if block.status == Miss then
-                                                            Break (Ok {state &  status : Hit (Set.empty {} |> Set.insert andSet.pattern)})           
-                                                        else 
-                                                            Continue  (Ok state)     
+                                                            hitLst =
+                                                                when state.status is
+                                                                    Hit patternsLst ->
+                                                                        patternsLst
+                                                                    Miss  ->  Set.empty {}
+
+                                                            Continue (Ok {allow &  status : Hit (hitLst |> Set.insert andSet.pattern)})
+                                                        else
+                                                            Continue  (Ok state)
                                                     Err message -> Break (Err message)
                                             )
-                                    else 
+                                    else
                                         Continue  (Ok state)
-                                Err message -> Break (Err message) 
+                                Err message -> Break (Err message)
                                 )
                     Err message -> Break (Err message))
-        when  allowStageResult is 
+        when  allowStageResult is
             Ok allowStage ->
                 if allowStage.status == Miss then
                     Ok register
                 else
-                    when blackListSearch sortedPatterns.andDecomposedBlock is 
-                        Ok blockProcess -> 
+                    when blackListSearch sortedPatterns.andDecomposedBlock is
+                        Ok blockProcess ->
                             if  blockProcess.status == Miss then
                                 Ok (List.append register allowStage)
-                            else 
+                            else
                                 Ok register
                         Err message -> Err message
-            Err message -> Err message 
+            Err message -> Err message
 
 searchPattern : Str, PatternType, ConfigType -> Result { line : LineAnalyzedType, status : LineSearchResultType }  Str
 searchPattern = \ line, pattern, config ->
-    when pattern is 
-        Allow (Regex pat) | Color (Regex pat) | Blacklist (Regex pat) -> 
-                    when regexWordMatch line pat { content : [], separator : [] } config.regexMagic is 
-                        Ok searched -> 
+    when pattern is
+        Allow (Regex pat) | Color (Regex pat) | Blacklist (Regex pat) ->
+                    when regexWordMatch line pat { content : [], separator : [] } config.regexMagic is
+                        Ok searched ->
                             if List.isEmpty searched.separator == Bool.false then
                                 if List.len searched.separator + 1 == List.len searched.content then
                                     Ok  { line : searched, status : Hit (Set.empty {} |> Set.insert pattern) }
@@ -490,9 +496,9 @@ searchPattern = \ line, pattern, config ->
                             else
                                Ok  { line : searched, status : Miss }
                         _-> Err ("unknown problem during search")
-                    
-        Allow (Plain pat) | Color (Plain pat) | Blacklist (Plain pat) -> 
-            searched = plainWordMatch line pat 
+
+        Allow (Plain pat) | Color (Plain pat) | Blacklist (Plain pat) ->
+            searched = plainWordMatch line pat
             if List.isEmpty searched.separator == Bool.false then
                 Ok { line : searched, status : Hit (Set.empty {} |> Set.insert pattern)}
             else
@@ -502,11 +508,11 @@ searchPattern = \ line, pattern, config ->
 
 mergeColors : List LineAnalyzedType-> LineAnalyzedType
 mergeColors = \ lst ->
-    ColorType : { char : U8,color : [ Color, Blank ]  }    
+    ColorType : { char : U8,color : [ Color, Blank ]  }
 
-    List.walk lst [] ( \ state, line ->    
-        when line.content is 
-            [ word ] -> 
+    List.walk lst [] ( \ state, line ->
+        when line.content is
+            [ word ] ->
                 # this should never be hit in proper design but just to make it right
                 List.append state (List.map (Str.toUtf8 word) ( \ char -> { char : char,color : Blank} ))
             [.. as head, tail] ->
@@ -522,48 +528,48 @@ mergeColors = \ lst ->
     |> (\ colorDefLst ->
             when colorDefLst is
                 [head, .. as tail] ->
-                    List.walk  tail head ( \ state, new -> 
+                    List.walk  tail head ( \ state, new ->
                         List.map2 state new ( \ left, right ->
                             if left.color == Color then
-                                left 
+                                left
                             else if right.color == Color then
                                 right
                             else
                                 left
                         ))
-                    |> List.walk { last : Blank, joined : {content : [""], separator : [] } } ( \ state,colorChar -> 
+                    |> List.walk { last : Blank, joined : {content : [""], separator : [] } } ( \ state,colorChar ->
                         appendArray : List Str, U8 -> List Str
                         appendArray = \ array, char ->
                             List.append array (Utils.utfToStr [char] )
 
                         joinArray : List Str, U8 -> List Str
                         joinArray = \ array, char ->
-                            when array is 
+                            when array is
                                 [.., lastElem] ->
-                                    Utils.modifyLastInList array (Str.concat lastElem (Utils.utfToStr [char] ) ) 
+                                    Utils.modifyLastInList array (Str.concat lastElem (Utils.utfToStr [char] ) )
                                 [] ->
                                     List.append array (Utils.utfToStr [char] )
-                         
+
 
                         if colorChar.color == Blank then
-                            if state.last == Blank then 
+                            if state.last == Blank then
                                 {state & joined : {content : joinArray state.joined.content  colorChar.char, separator : state.joined.separator  } }
-                            else 
+                            else
                                 {last : Blank, joined : {content : appendArray state.joined.content  colorChar.char, separator : state.joined.separator  }}
-                        else 
-                            if state.last == Blank then 
+                        else
+                            if state.last == Blank then
                                 {last : Color, joined : {content : state.joined.content, separator : appendArray state.joined.separator  colorChar.char }}
-                            else 
+                            else
                                 {state & joined : {content : state.joined.content, separator : joinArray state.joined.separator  colorChar.char }}
-                    ) 
-                    |> ( \ mergedData -> 
-                        joined = mergedData.joined 
-                        if List.len joined.content == List.len joined.separator then 
+                    )
+                    |> ( \ mergedData ->
+                        joined = mergedData.joined
+                        if List.len joined.content == List.len joined.separator then
                             {joined & content : List.append  joined.content "" }
                         else
                             joined
                         )
-                [array] -> 
+                [array] ->
                     {
                         content : [Utils.utfToStr (List.map array ( \ charColor -> charColor.char ))],
                         separator : [],
@@ -572,12 +578,12 @@ mergeColors = \ lst ->
 
 produceOutput : LineAnalyzedType -> Str
 produceOutput = \ line ->
-    when line.content is 
+    when line.content is
         [ word ] -> word
         [head,.. as tail ] ->
             head
             |> Str.concat (
-                List.map2 line.separator tail (\ left, right -> 
+                List.map2 line.separator tail (\ left, right ->
                     Str.concat  ( Utils.withColor left  Red) right
                 )
                 |> List.walk "" (\ phrase, str ->
@@ -590,21 +596,21 @@ plainWordMatch : Str, Str -> LineAnalyzedType
 plainWordMatch = \ word, pattern ->
     when (Str.split  word  pattern ) is
         [one] ->
-            { content : [word], separator : [] }  
-        lst -> 
+            { content : [word], separator : [] }
+        lst ->
             { content : lst, separator : List.repeat  pattern ((List.len lst) - 1) }
 
 regexWordMatch : Str, Str, LineAnalyzedType, MagicType -> Result LineAnalyzedType  Str
 regexWordMatch = \ word, pattern, register, magic ->
-    if  Str.isEmpty word then 
+    if  Str.isEmpty word then
         if List.len register.content == List.len register.content  then
-            Ok { register & content : List.append register.content "" } 
-        else  
-            Ok register 
+            Ok { register & content : List.append register.content "" }
+        else
+            Ok register
     else
-        when Regex.parseStrMagic word pattern magic is 
+        when Regex.parseStrMagic word pattern magic is
             Ok parsed ->
-                if parsed.matchFound == Bool.true then 
+                if parsed.matchFound == Bool.true then
                         current =
                         {
                             content : List.append register.content (Utils.utfToStr parsed.missed),
@@ -613,16 +619,16 @@ regexWordMatch = \ word, pattern, register, magic ->
                         regexWordMatch (Utils.utfToStr parsed.left) pattern current magic
                 else
                     Ok ( {content : List.append register.content word, separator : register.separator })
-            Err message -> Err message 
+            Err message -> Err message
 
 # in this function I want to experiment with tuples as state in walk (will I be able to maintain this in long run ??)
 filterSections : List LineProcessedType, List SectionType -> List (List LineProcessedType)
-filterSections = \ lines, sections  -> 
+filterSections = \ lines, sections  ->
     if List.len  sections == 0 then
         []
     else
-        longest = List.walk sections 0  
-            ( \ len , pat  -> 
+        longest = List.walk sections 0
+            ( \ len , pat  ->
                 if pat.before > len then
                     pat.before
                 else
@@ -630,86 +636,85 @@ filterSections = \ lines, sections  ->
 
         getSizeLast : List (List a) -> Nat
         getSizeLast = ( \ listOfLst  ->
-            when List.last listOfLst is 
+            when List.last listOfLst is
                 Ok lst -> List.len lst
                 Err _ -> 0 )
-    
+
         evalIfHit : LineProcessedType -> (Bool, Nat, Nat)
-        evalIfHit = \ line -> 
+        evalIfHit = \ line ->
             getLonger : Nat, Nat -> Nat
             getLonger = \ left, right ->
                 if  left >  right then
                     left
                 else
-                    right 
+                    right
             List.walkUntil sections  (Bool.false, 0, 0) (\ state, section->
-                when  line.status is 
-                    Hit  patterns -> 
-                        if Set.contains patterns section.pattern == Bool.true then 
-                             Continue (Bool.true , getLonger state.1 section.before, getLonger state.2 section.after ) 
-                        else 
+                when  line.status is
+                    Hit  patterns ->
+                        if Set.contains patterns section.pattern == Bool.true then
+                             Continue (Bool.true , getLonger state.1 section.before, getLonger state.2 section.after )
+                        else
                             Continue state
-                    Miss -> Continue state 
+                    Miss -> Continue state
                 )
-    
+
         nextLineParse : {cnt : Nat,buffer : List LineProcessedType, outBuffers: List (List LineProcessedType)}, LineProcessedType -> {cnt : Nat,buffer : List LineProcessedType, outBuffers: List (List LineProcessedType)}
         nextLineParse = (\  state, line ->
-            parsingResult = evalIfHit line 
-            if parsingResult.0 == Bool.true  then  
+            parsingResult = evalIfHit line
+            if parsingResult.0 == Bool.true  then
 
                 state
                 |> ( \ stateIn ->
 
                     if parsingResult.1 > (getSizeLast stateIn.outBuffers) then
                         { stateIn &
-                            outBuffers : 
+                            outBuffers :
                                 List.dropLast  stateIn.outBuffers 1
                                 |> List.append  ( List.sublist stateIn.buffer { start: (longest - parsingResult.1 ), len: parsingResult.1 + 1 } )
                         }
                     else
-                        lastExtended = 
+                        lastExtended =
                             when  List.last stateIn.outBuffers is
-                                    Ok lst -> 
+                                    Ok lst ->
                                         Utils.modifyLastInList stateIn.outBuffers  (List.append lst line)
-                                    Err _ ->  List.append stateIn.outBuffers [line] 
+                                    Err _ ->  List.append stateIn.outBuffers [line]
                         { stateIn & outBuffers : lastExtended }
-                        
+
                 )
-                |> ( \ modState ->     
+                |> ( \ modState ->
                         if parsingResult.2 >= modState.cnt  then
                             { modState & cnt : parsingResult.2 }
                         else
                             { modState & cnt : modState.cnt - 1 } )
-            else 
+            else
                 updatedBuffer =
                     when  List.last state.outBuffers is
-                                Ok lst -> 
+                                Ok lst ->
                                     Utils.modifyLastInList state.outBuffers  (List.append lst line)
                                 Err _ ->  List.append state.outBuffers [line]
                 if state.cnt > 0 then
                     { state & cnt : state.cnt - 1, outBuffers : updatedBuffer }
                 else
                     when  List.last state.outBuffers is
-                        Ok lst -> 
+                        Ok lst ->
                             if List.len lst > 0 then
                                 { state &  outBuffers : List.append state.outBuffers  [] }
                             else
                                 state
                         Err _ -> state )
-                    
-        analysysDone = 
+
+        analysysDone =
             List.walk lines {cnt : 0,buffer : [], outBuffers : []}
                 (\ state , line ->
-                    state 
+                    state
                     |> ( \ inState ->
                         if List.len inState.buffer <= longest then
                             { inState & buffer : List.append inState.buffer line}
                         else
                             { inState &
-                                 buffer : 
+                                 buffer :
                                     List.dropFirst inState.buffer 1
                                     |> List.append  line })
-                    |> nextLineParse line 
+                    |> nextLineParse line
                 )
         List.dropIf analysysDone.outBuffers (\lst -> List.isEmpty lst)
-  

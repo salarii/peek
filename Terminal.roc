@@ -14,7 +14,7 @@ interface  Terminal
         Commands.{quitCommand},
         State.{StateType,TerminalLineStateType}
     ]
-# While the cursor handling could be improved, it is not a critical issue at this time.   
+# While the cursor handling could be improved, it is not a critical issue at this time.
 initPhrase : List U8
 initPhrase = Str.toUtf8 ""
 
@@ -32,7 +32,7 @@ addToHistoryList = \ historyLst, newItem ->
         historyLst
 
 addToHistoryListNoAlter : List (List U8), List U8 -> List (List U8)
-addToHistoryListNoAlter = \ historyLst, newItem -> 
+addToHistoryListNoAlter = \ historyLst, newItem ->
     if List.len newItem > 0 then
         insert =
             List.walkUntil historyLst Bool.true ( \ state, item  ->
@@ -41,38 +41,38 @@ addToHistoryListNoAlter = \ historyLst, newItem ->
                 else
                     Continue state
             )
-        if insert == Bool.true then 
+        if insert == Bool.true then
             List.prepend historyLst newItem
         else
-            historyLst 
+            historyLst
     else
         historyLst
 
-injectString : List U8, List U8, I32 -> {composed : List U8,inJectedCnt : I32 } 
+injectString : List U8, List U8, I32 -> {composed : List U8,inJectedCnt : I32 }
 injectString =  \ destStr, inStr, n ->
     List.split destStr (Num.toNat n)
     |> (\ splited ->
-        composed = 
+        composed =
             List.concat splited.before inStr
             |> List.concat splited.others
-        { composed : composed, inJectedCnt : Num.toI32 (List.len inStr) } )   
+        { composed : composed, inJectedCnt : Num.toI32 (List.len inStr) } )
 
-removeCharString : List U8, I32 ->  List U8 
-removeCharString =  \ destStr, n -> 
+removeCharString : List U8, I32 ->  List U8
+removeCharString =  \ destStr, n ->
     List.split destStr (Num.toNat n)
     |> (\ splited ->
         List.dropLast  splited.before  1
         |> List.concat splited.others )
 
-getPromptSize : TerminalLineStateType -> I32 
+getPromptSize : TerminalLineStateType -> I32
 getPromptSize = \ state ->
     state.prompt
     |> List.len
     |> Num.toI32
 
-guessPath : StateType -> Task StateType * 
+guessPath : StateType -> Task StateType *
 guessPath = \ appState ->
-    listDir : List Str -> Task StateType * 
+    listDir : List Str -> Task StateType *
     listDir = \ lst ->
         dirPresence <-System.checkListOfDirsGiveSet lst |> Task.attempt
         dirs =
@@ -80,8 +80,8 @@ guessPath = \ appState ->
                 System.stripPath pathDir
                 |> (\ pathSplitted -> pathSplitted.after )
             )
-       
-        group = 
+
+        group =
             List.map lst (\ path ->
                 System.stripPath path
                 |> (\ pathSplitted -> pathSplitted.after ))
@@ -100,14 +100,14 @@ guessPath = \ appState ->
     terminal = State.getTerminalState  appState
     Utils.utfToStr terminal.content
     |> Utils.tokenize
-    |> ( \ splited -> 
-            when splited is 
+    |> ( \ splited ->
+            when splited is
                 [..,last] ->
                     guessResult <- System.guessPath (Commands.replaceTilde  appState last)  |> Task.attempt
                     when guessResult is
-                        Ok guess -> 
-                            when guess is 
-                                Extend str -> 
+                        Ok guess ->
+                            when guess is
+                                Extend str ->
                                     Task.ok (State.setTerminalState appState (modifyLine terminal (Characters (Str.toUtf8 str))) )
                                 ListDir lst ->
                                     listDir lst
@@ -117,12 +117,12 @@ guessPath = \ appState ->
                 [] ->
                     listedTop <- System.listEntries "." |> Task.attempt
                     Result.withDefault listedTop []
-                    |> listDir ) 
+                    |> listDir )
 
-adjustCursorPos : {row : I32, col: I32}, I32 -> {row : I32, col: I32} 
+adjustCursorPos : {row : I32, col: I32}, I32 -> {row : I32, col: I32}
 adjustCursorPos = \  position, lineCnt ->
     {
-        row: 
+        row:
             position.row +
             (Num.divTrunc (position.col - 1 ) lineCnt),
         col :
@@ -135,32 +135,32 @@ adjustCursorPos = \  position, lineCnt ->
     }
 
 init : StateType -> Task StateType *
-init = \ appState -> 
+init = \ appState ->
     {} <- Tty.enableRawMode |> Task.await
     {} <- Stdout.write clearLinePat |> Task.await
     {} <- Stdout.write endLinePat |> Task.await
     {} <- Stdout.write bottomLinePat |> Task.await
     state =  State.getTerminalState appState
-    cursorPositionRes <- queryPosition "" |> Task.attempt 
-    when cursorPositionRes is 
+    cursorPositionRes <- queryPosition "" |> Task.attempt
+    when cursorPositionRes is
     Ok cursor ->
         updateLineSizeState = State.setTerminalState appState {state & windowSize: cursor.row, lineSize : cursor.col }
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- Stdout.write (Utils.utfToStr state.prompt) |> Task.await
         State.setTerminalHistory updateLineSizeState (State.getCommandHistory appState ).sys
-        |> setCursor 
-                    
+        |> setCursor
+
     Err _ -> Task.ok appState
 
 setCursor : StateType -> Task StateType *
 setCursor = \ appState ->
     state =  State.getTerminalState appState
     cursorPositionRes <- queryPosition "" |> Task.attempt
-    when cursorPositionRes is 
+    when cursorPositionRes is
     Ok cursor ->
         Task.ok (State.setTerminalState appState {state & cursor : cursor} )
     Err _ -> Task.ok appState
-    
+
 
 displayCommand :StateType, Str-> Task StateType *
 displayCommand = \ appState, command ->
@@ -171,15 +171,15 @@ displayCommand = \ appState, command ->
         print =
             Task.loop out ( \ lst ->
                 when lst is
-                    [front, .. as back ] -> 
+                    [front, .. as back ] ->
                         {} <- Stdout.write homeLinePat |> Task.await
                         {} <- Stdout.write front |> Task.await
                         {} <- Stdout.write "\n" |> Task.await
                         Task.ok (Step back)
-                    [] -> 
+                    [] ->
                         Task.ok (Done {})
             )
-        
+
         {} <- Stdout.write clearLinePat |> Task.await
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- Stdout.write "Command executed: " |> Task.await
@@ -188,13 +188,13 @@ displayCommand = \ appState, command ->
         {} <- Stdout.write homeLinePat |> Task.await
         {} <- print |> Task.await
         {} <- Stdout.write clearLinePat |> Task.await
-        {} <- Stdout.write homeLinePat |> Task.await 
+        {} <- Stdout.write homeLinePat |> Task.await
         _ <- Stdout.write (Utils.utfToStr (State.getTerminalState appState).prompt) |> Task.attempt
         cursorUpdated <-setCursor appState |> Task.await
         Task.ok cursorUpdated
     else
         {} <- Stdout.write clearLinePat |> Task.await
-        {} <- Stdout.write homeLinePat |> Task.await 
+        {} <- Stdout.write homeLinePat |> Task.await
         _ <- Stdout.write (Utils.utfToStr (State.getTerminalState appState).prompt) |> Task.attempt
         cursorUpdated <-setCursor appState |> Task.await
         Task.ok cursorUpdated
@@ -210,43 +210,43 @@ drawState = \ appState ->
         #     {} <- Stdout.write (cursorPosition {row: row, col: 1}) |> Task.await
         #     {} <- Stdout.write clearLinePat |> Task.await
         #     {} <- Stdout.write homeLinePat |> Task.await
-        #     clearLines  (from - 1) to  
-        List.walk (List.range { start: At to, end: At from }) (Task.ok {} )( \task, row-> 
+        #     clearLines  (from - 1) to
+        List.walk (List.range { start: At to, end: At from }) (Task.ok {} )( \task, row->
             {} <- Stdout.write (cursorPosition {row: row, col: 1}) |> Task.await
             {} <- Stdout.write clearLinePat |> Task.await
-            Stdout.write homeLinePat    
+            Stdout.write homeLinePat
             # when I use like below it crashes
             #{} <- Stdout.write homeLinePat |> Task.await
             #task
-        ) 
-    
-    determineSpan : TerminalLineStateType -> (Bool, I32, I32) 
+        )
+
+    determineSpan : TerminalLineStateType -> (Bool, I32, I32)
     determineSpan = \ terminal ->
         endRow = terminal.cursor.row + (Num.divTrunc (terminal.cursor.col - 1) terminal.lineSize)
         if endRow > terminal.windowSize then
             (Bool.true,terminal.cursor.row - 1, endRow - 1)
-        else                 
+        else
             (Bool.false,terminal.cursor.row, endRow)
-    
+
     pushLine : TerminalLineStateType -> Task {} *
     pushLine = \ terminal ->
         {} <- Stdout.write bottomLinePat |> Task.await
-        {} <- Stdout.write endLinePat |> Task.await 
-        Stdout.write "   " 
+        {} <- Stdout.write endLinePat |> Task.await
+        Stdout.write "   "
 
-    state =  State.getTerminalState appState    
+    state =  State.getTerminalState appState
     span = determineSpan state
     updatedRow =  {
-         state & 
+         state &
          cursor : { row : span.1, col : state.cursor.col },
     }
-              
+
     if span.0 then
         _ <- pushLine updatedRow |> Task.await
         _ <- clearLines span.1 span.2 |> Task.await
         _ <- drawStateInternal updatedRow |> Task.attempt
         Task.ok (State.setTerminalState appState updatedRow )
-    else 
+    else
         _ <- clearLines span.1 span.2 |> Task.await
         _ <- drawStateInternal updatedRow |> Task.attempt
         Task.ok (State.setTerminalState appState updatedRow )
@@ -255,14 +255,14 @@ step : StateType-> Task StateType *
 step = \ appState ->
     state =  State.getTerminalState appState
     promptSize = (getPromptSize state)
- 
+
     inputResult <- Stdin.bytes |> Task.attempt
-  
-    when inputResult is 
-        Ok input ->  
+
+    when inputResult is
+        Ok input ->
             command = parseRawStdin input
-            when command is 
-                Shift direction -> 
+            when command is
+                Shift direction ->
                     if (Num.toI32 (List.len state.content) + promptSize < state.cursor.col && direction == (Right 1 )) ||
                         ((direction == (Left 1 )) && state.cursor.col == 1 + promptSize ) then
                         Task.ok appState
@@ -279,7 +279,7 @@ step = \ appState ->
                     Task.ok (State.setTerminalState appState (clearLine state) )
                 PreviousCommand ->
                     Task.ok (State.setTerminalState appState (fromHistory state Previous) )
-                GuessPath -> 
+                GuessPath ->
                     guessPath appState
                 EnterCommand ->
                     historyHandledState <- State.setTerminalState appState (enterHistory state)
@@ -289,43 +289,43 @@ step = \ appState ->
                     Task.ok (State.resetActiveCommand cursorPosOkState)
                 NextCommand ->
                     Task.ok (State.setTerminalState appState (fromHistory state Next) )
-                Quit -> 
-                    Commands.handleUserCommand appState quitCommand   
+                Quit ->
+                    Commands.handleUserCommand appState quitCommand
                 Unsupported ->
                     Task.ok appState
-                _ -> 
+                _ ->
                     Task.ok appState
         Err _ -> Task.ok appState
 
 modifyCursor : TerminalLineStateType, Direction -> TerminalLineStateType
 modifyCursor = \state, direction ->
-    when direction is 
+    when direction is
         Left val->
-            { state & 
+            { state &
                 cursor: {
-                    row: state.cursor.row, 
+                    row: state.cursor.row,
                     col: state.cursor.col - val,
                 }
             }
         Right val->
-            { state & 
+            { state &
                 cursor: {
-                    row: state.cursor.row, 
+                    row: state.cursor.row,
                     col: state.cursor.col + val,
                 }
             }
 
         Begin ->
-            { state & 
+            { state &
                 cursor: {
                     row: state.cursor.row,
                     col: 1+(getPromptSize state),
                 }
             }
         End ->
-            { state & 
+            { state &
                 cursor: {
-                    row: state.cursor.row, 
+                    row: state.cursor.row,
                     col: Num.toI32 (List.len state.content)+1+(getPromptSize state),
                 }
             }
@@ -345,10 +345,10 @@ fromHistory : TerminalLineStateType, [Previous,Next] -> TerminalLineStateType
 fromHistory = \state, order ->
     length = Num.toI32 (List.len state.commandHistory)
     colBase = (getPromptSize state) + 1
-    if order == Previous && length - 1> state.historyCnt then 
+    if order == Previous && length - 1> state.historyCnt then
             List.get state.commandHistory (Num.toNat (state.historyCnt+1))
             |>Result.withDefault  []
-            |> ( \ updatedContent -> 
+            |> ( \ updatedContent ->
                 {
                     state &
                     content : updatedContent,
@@ -358,7 +358,7 @@ fromHistory = \state, order ->
                     cursor :  {row : state.cursor.row, col : Num.toI32 (List.len updatedContent ) + colBase }
                 })
     else if order == Next && state.historyCnt >= 0 then
-            if state.historyCnt == 0 then 
+            if state.historyCnt == 0 then
 
                 {
                         state &
@@ -371,7 +371,7 @@ fromHistory = \state, order ->
             else
                 List.get state.commandHistory (Num.toNat (state.historyCnt-1))
                 |>Result.withDefault  []
-                |> ( \ updatedContent -> 
+                |> ( \ updatedContent ->
                     {
                         state &
                         content : updatedContent,
@@ -380,17 +380,17 @@ fromHistory = \state, order ->
                             addToHistoryListNoAlter state.commandHistory state.content,
                         cursor :  {row : state.cursor.row, col : Num.toI32 (List.len updatedContent ) + colBase }
                     })
-    else 
+    else
         state
 
 clearLine : TerminalLineStateType -> TerminalLineStateType
 clearLine = \state ->
 
-    updatedContent = 
+    updatedContent =
         List.split state.content (Num.toNat (state.cursor.col) - 1)
         |> (\ splited ->
             splited.others )
-    { state & 
+    { state &
         content: updatedContent
     }
     |> modifyCursor Begin
@@ -398,19 +398,19 @@ clearLine = \state ->
 modifyLine : TerminalLineStateType, [Characters (List U8),RemoveLast ] -> TerminalLineStateType
 modifyLine = \state, operation ->
     promptSize = (getPromptSize state)
-    when operation is 
+    when operation is
         Characters chars ->
-            injected = injectString state.content (Str.toUtf8 (Utils.utfToStr chars)) (state.cursor.col-1 - promptSize) 
-            { state & 
+            injected = injectString state.content (Str.toUtf8 (Utils.utfToStr chars)) (state.cursor.col-1 - promptSize)
+            { state &
                 content: injected.composed
             }
-            |> modifyCursor (Right injected.inJectedCnt ) 
-        RemoveLast -> 
-            
-            { state & 
+            |> modifyCursor (Right injected.inJectedCnt )
+        RemoveLast ->
+
+            { state &
                 content: removeCharString state.content (state.cursor.col - 1 - promptSize)
             }
-            |> modifyCursor (Left 1) 
+            |> modifyCursor (Left 1)
 
 
 drawStateInternal : TerminalLineStateType -> Task {} *
@@ -428,19 +428,19 @@ queryPosition = \ _none ->
     positionResult <- setupTerminal |> Task.attempt
     when positionResult is
         Ok consoleOut ->
-            position = Result.withDefault (Str.fromUtf8 (List.dropFirst consoleOut 1)) "" 
+            position = Result.withDefault (Str.fromUtf8 (List.dropFirst consoleOut 1)) ""
             when Regex.parseStr position "(\\d+);(\\d+)R"  is
                 Ok parsed ->
                     when ((Regex.getValue [0] 0 parsed.captured),
                         (Regex.getValue [1] 0 parsed.captured)) is
                         ( Ok rowStr, Ok colStr  )->
-                            Task.ok 
+                            Task.ok
                                 {
                                     row : Utils.asciiArrayToNumber rowStr Str.toI32,
                                     col : Utils.asciiArrayToNumber colStr Str.toI32
                                 }
-                        _ -> Task.ok  { row : 1, col : 1 } 
-                Err  message -> Task.ok  { row : 1, col : 1 } 
+                        _ -> Task.ok  { row : 1, col : 1 }
+                Err  message -> Task.ok  { row : 1, col : 1 }
         Err _ -> Task.ok  { row : 1, col : 1 }
 
 Direction : [Left I32, Right I32, Begin, End ]
@@ -453,7 +453,7 @@ Action : [
     RemoveLast,
     ClearLine,
     EnterCommand,
-    GuessPath, 
+    GuessPath,
     Characters (List  U8),
     Quit,
     Empty,
@@ -461,12 +461,12 @@ Action : [
 
 queryScreenPositionPat = "\u(001b)[6n"
 clearScreenPat = "\u(001b)[2J"
-clearLinePat ="\u(001b)[2K" 
+clearLinePat ="\u(001b)[2K"
 homeLinePat  = "\u(001b)[0G"
 endLinePat  = "\u(001b)[300G"
 bottomLinePat  = "\u(001b)[300B"
 
-cursorPosition : {row: I32, col: I32} -> Str 
+cursorPosition : {row: I32, col: I32} -> Str
 cursorPosition = \{row, col} ->
     rowStr = row |> Num.toStr
     colStr = col |> Num.toStr
@@ -476,7 +476,7 @@ cursorPosition = \{row, col} ->
 # I want it to be not customizable
 parseRawStdin : List U8 -> Action
 parseRawStdin = \bytes ->
-    when bytes is 
+    when bytes is
         [27, 91, 65, ..] -> PreviousCommand
         [27, 91, 66, ..] -> NextCommand
         [27, 91, 67, ..] -> Shift (Right 1)
@@ -485,7 +485,7 @@ parseRawStdin = \bytes ->
         [21, ..] -> ClearLine
         [13, ..] -> EnterCommand
         [27, 91, 72,..] -> Shift Begin
-        [27, 91, 70,..] -> Shift End 
+        [27, 91, 70,..] -> Shift End
         [9, ..] -> GuessPath
         #[27, val, cal,  ..] -> Quit
         [3, ..] -> Quit

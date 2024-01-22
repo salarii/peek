@@ -28,13 +28,13 @@ interface State
         ]
     imports [Regex.{regexMagic, MagicType}]
 
-PatternType : 
-    [ 
+PatternType :
+    [
         Allow [ Plain Str, Regex Str, LogicalAnd (List [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]])],
         Blacklist [ Plain Str, Regex Str, LogicalAnd (List [Allow [ Plain Str, Regex Str], Blacklist [Plain Str, Regex Str]])],
-        Color [ Plain Str, Regex Str],   
-        ] 
-            
+        Color [ Plain Str, Regex Str],
+        ]
+
 
 ModifiersType : [ NumberLines]
 
@@ -51,8 +51,8 @@ HistoryType : List (List U8)
 
 ConfigType : {
     limit : List [FromLineToLine  I32 I32],
-    command: CommandType, 
-    modifiers : Set ModifiersType, 
+    command: CommandType,
+    modifiers : Set ModifiersType,
     patterns : List PatternType,
     regexMagic : MagicType, # remember to remove this one day : )
     }
@@ -72,7 +72,7 @@ TerminalLineStateType : {
     }
 
 SystemDataType : {
-    homePath : Str, 
+    homePath : Str,
     current : Str,
     }
 
@@ -81,7 +81,7 @@ StateType := {
     lastCommandOut : List Str,
     file: List Str,
     terminal : TerminalLineStateType,
-    system : SystemDataType,  
+    system : SystemDataType,
     #config : SearchSetupType,
     mode : AppModeType,
     commandsHistory : { sys : HistoryType,  search : HistoryType},
@@ -90,7 +90,7 @@ StateType := {
 
 
 createConfigInstance :  List [FromLineToLine  I32 I32], CommandType, Set ModifiersType, List PatternType -> ConfigType
-createConfigInstance = \  limit, command, modifiers, patterns -> 
+createConfigInstance = \  limit, command, modifiers, patterns ->
     {limit : limit, command : command, modifiers : modifiers, patterns : patterns, regexMagic : regexMagic,}
 
 
@@ -123,17 +123,17 @@ resetActiveCommand = \ @StateType content ->
 
 setFile : StateType, List Str -> StateType
 setFile = \ @StateType content, file ->
-    @StateType { content & file : file } 
+    @StateType { content & file : file }
 
 setCommandOutput : StateType, Str -> StateType
 setCommandOutput = \ @StateType content, out ->
     splited = Str.split out "\n"
-    #@StateType { content &  history : (List.concat content.history splited ), lastCommandOut : splited  } 
+    #@StateType { content &  history : (List.concat content.history splited ), lastCommandOut : splited  }
     @StateType { content &  lastCommandOut : splited  }
-    
+
 setTerminalState : StateType, TerminalLineStateType -> StateType
 setTerminalState = \ @StateType content, terminalState ->
-    @StateType { content &  terminal : terminalState } 
+    @StateType { content &  terminal : terminalState }
 
 setSystemData : StateType, SystemDataType -> StateType
 setSystemData = \ @StateType content, systemData ->
@@ -147,10 +147,10 @@ updatePrompt = \  @StateType content ->
             content.system.current
             |> Str.concat " $> "
             |> Str.toUtf8
-        @StateType { content &  terminal : { terminal & prompt : prompt } } 
+        @StateType { content &  terminal : { terminal & prompt : prompt } }
     else if content.mode == Search then
-        @StateType { content &  terminal : { terminal & prompt : [] } } 
-    else 
+        @StateType { content &  terminal : { terminal & prompt : [] } }
+    else
         @StateType content
 
 setAppMode : StateType, AppModeType -> StateType
@@ -175,22 +175,22 @@ getSystemData = \ @StateType content ->
 
 getFile : StateType -> List Str
 getFile = \ @StateType content ->
-    content.file 
+    content.file
 
 getAppMode : StateType -> AppModeType
 getAppMode = \@StateType content ->
     content.mode
-    
+
 setCommandHistory : StateType, { sys : HistoryType,  search : HistoryType} -> StateType
-setCommandHistory = \@StateType content, history -> 
+setCommandHistory = \@StateType content, history ->
     @StateType { content & commandsHistory  : history }
-    
+
 getCommandHistory : StateType -> { sys : HistoryType,  search : HistoryType}
 getCommandHistory = \@StateType content ->
-    content.commandsHistory 
-    
+    content.commandsHistory
+
 setTerminalHistory : StateType, List (List U8) -> StateType
-setTerminalHistory = \@StateType content, history -> 
-    terminal =  content.terminal 
+setTerminalHistory = \@StateType content, history ->
+    terminal =  content.terminal
     @StateType { content & terminal : { terminal & commandHistory : history, historyCnt : -1 } }
 
