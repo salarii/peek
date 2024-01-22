@@ -377,7 +377,7 @@ analyseLine = \ lineData, patterns, register, config ->
                         |> ( \ allowResult ->
                             when allowResult is
                                 Ok allow ->
-                                    if allow.status == Miss && Set.isEmpty andSet.decomposed.1 == Bool.true then
+                                    if allow.status == Miss && Set.isEmpty andSet.decomposed.1 == Bool.false then
                                         (Set.walkUntil andSet.decomposed.1 (Ok {miss & status : Hit (Set.empty {} |> Set.insert andSet.pattern)}) (\ searchStateResult, pattern ->
                                             when searchStateResult is
                                                 Ok searchState ->
@@ -397,11 +397,10 @@ analyseLine = \ lineData, patterns, register, config ->
                     |> ( \ blockProcessed ->
                         when blockProcessed is
                             Ok processed ->
-                                dbg  processed
                                 if processed.status == Miss then
-                                    Break ( Ok processed )
+                                    Continue ( Ok processed )
                                 else
-                                    Continue ( Ok miss )
+                                    Break ( Ok processed )
                             Err message -> Break (Err message)
                     )
                 Err message -> Break (Err message))

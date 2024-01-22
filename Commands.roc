@@ -313,7 +313,6 @@ evaluate = \ data, parser ->
                             current : { handlers: closeANDHandlers, data : Condition Bool.false, left : "" },
                             data : { queue : updatedQueue |> List.prepend EndAnd, content : parser.data.content } }
                 [AndConfig, ..] ->
-                    dbg  "and  config"
                     content = List.append  parser.data.content { config: Set.empty {}, pattern : "" }
                     Ok
                         { parser &
