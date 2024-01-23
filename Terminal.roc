@@ -5,7 +5,6 @@ interface  Terminal
         pf.Stdin,
         pf.Task.{ Task },
         pf.Tty,
-        pf.Path,
         Regex,
         Utils,
         State,
@@ -15,8 +14,6 @@ interface  Terminal
         State.{StateType,TerminalLineStateType}
     ]
 # While the cursor handling could be improved, it is not a critical issue at this time.
-initPhrase : List U8
-initPhrase = Str.toUtf8 ""
 
 addToHistoryList : List (List U8), List U8 -> List (List U8)
 addToHistoryList = \ historyLst, newItem ->
@@ -211,7 +208,7 @@ drawState = \ appState ->
         #     {} <- Stdout.write clearLinePat |> Task.await
         #     {} <- Stdout.write homeLinePat |> Task.await
         #     clearLines  (from - 1) to
-        List.walk (List.range { start: At to, end: At from }) (Task.ok {} )( \task, row->
+        List.walk (List.range { start: At to, end: At from }) (Task.ok {} )( \_task, row->
             {} <- Stdout.write (cursorPosition {row: row, col: 1}) |> Task.await
             {} <- Stdout.write clearLinePat |> Task.await
             Stdout.write homeLinePat
@@ -229,7 +226,7 @@ drawState = \ appState ->
             (Bool.false,terminal.cursor.row, endRow)
 
     pushLine : TerminalLineStateType -> Task {} *
-    pushLine = \ terminal ->
+    pushLine = \ _terminal ->
         {} <- Stdout.write bottomLinePat |> Task.await
         {} <- Stdout.write endLinePat |> Task.await
         Stdout.write "   "
@@ -440,7 +437,7 @@ queryPosition = \ _none ->
                                     col : Utils.asciiArrayToNumber colStr Str.toI32
                                 }
                         _ -> Task.ok  { row : 1, col : 1 }
-                Err  message -> Task.ok  { row : 1, col : 1 }
+                Err  _ -> Task.ok  { row : 1, col : 1 }
         Err _ -> Task.ok  { row : 1, col : 1 }
 
 Direction : [Left I32, Right I32, Begin, End ]
@@ -460,7 +457,6 @@ Action : [
 ]
 
 queryScreenPositionPat = "\u(001b)[6n"
-clearScreenPat = "\u(001b)[2J"
 clearLinePat ="\u(001b)[2K"
 homeLinePat  = "\u(001b)[0G"
 endLinePat  = "\u(001b)[300G"
@@ -490,4 +486,3 @@ parseRawStdin = \bytes ->
         #[27, val, cal,  ..] -> Quit
         [3, ..] -> Quit
         other -> Characters other
-        [] -> Empty

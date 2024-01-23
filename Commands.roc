@@ -65,7 +65,7 @@ insertTag = \ miniParserData, operation ->
         ParserConfig configType ->
             when Dict.get configType.exclusive operation is
                 Ok exclusiveLst ->
-                    List.walkUntil exclusiveLst Bool.false (\ status, tag ->
+                    List.walkUntil exclusiveLst Bool.false (\ _status, tag ->
                         if Set.contains configType.options tag == Bool.true then
                             Break Bool.true
                         else
@@ -162,7 +162,7 @@ fullCommandsHandlers =
 fullCommandMiniParser =  { handlers: fullCommandsHandlers, data :  Other None, left : "" }
 
 createNumberLines : createNumberLines, MiniParserDataType -> Result ParserOutcomeType Str
-createNumberLines = \ parsed, miniParser ->
+createNumberLines = \ _parsed, _miniParser ->
     Ok (Completed ( Other NumberLines ) )
 
 createLineToLine : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
@@ -180,8 +180,6 @@ createLineToLine = \ parsResult, _miniParser ->
                         Ok ( Completed (Other (FromLineToLine  (Utils.asciiArrayToNumber val Str.toI32) -1) ) )
                     (valStart,valEnd)->
                         Ok ( Completed (Other (FromLineToLine  (Utils.asciiArrayToNumber valStart Str.toI32)  (Utils.asciiArrayToNumber valEnd Str.toI32)) ) )
-                    _ ->
-                        Err "Command processing error : \(Utils.utfToStr parsResult.matched) comand"
             _ -> Err "Command processing error : \(Utils.utfToStr parsResult.matched) comand"
 
 simpleHandlers =
@@ -189,7 +187,7 @@ simpleHandlers =
     |> Dict.insert "^(\\S+)\\s" simpleHandler
 
 simpleHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
-simpleHandler = \ parsed, miniParserData ->
+simpleHandler = \ parsed, _miniParserData ->
     when Regex.getValue [0] 0 parsed.captured is
         Ok pattern ->
             Ok ( Completed (Simple ( Utils.utfToStr pattern )) )
@@ -215,7 +213,7 @@ configMiniParser =  { handlers: configHandlers, data :  ParserConfig configData,
 configANDParser =  { handlers: configANDHandlers, data :  ParserConfig configData, left : "" }
 
 conditionHit : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
-conditionHit = \ parsed, data ->
+conditionHit = \ parsed, _data ->
     Ok (Completed ( Condition parsed.matchFound ) )
 
 evaluate : MiniParserDataType, ParserType -> Result ParserType Str
@@ -244,8 +242,6 @@ evaluate = \ data, parser ->
                         { parser &
                             current : fullCommandMiniParser,
                             data : { queue : updatedQueue |> List.prepend FullCommands, content : content } }
-                _ ->
-                    Err  "unknown problem with command processing"
         Simple simpleData ->
             when parser.data.queue is
                 [AndPattern, ..] ->
@@ -351,10 +347,6 @@ evaluate = \ data, parser ->
                 _ ->
                     Err "unknown problem with command processing"
 
-isParserCompleted : ParserDataType -> Bool
-isParserCompleted = \ parserData ->
-    List.isEmpty parserData.queue
-
 runParser : Str, ParserType -> Result ParserDataType Str
 runParser = \ input, parser ->
     loopCommand : Str, MiniParserType -> Result MiniParserType Str
@@ -399,8 +391,7 @@ runParser = \ input, parser ->
             Ok  parsed ->
                 when evaluate parsed.data parser is
                     Ok alteredParser ->
-                        if #isParserCompleted alteredParser.data ||
-                            Str.isEmpty (Str.trimStart parsed.left) then
+                        if Str.isEmpty (Str.trimStart parsed.left) then
                             # validate if parsing correct
                             Ok alteredParser.data
                         else
@@ -431,12 +422,6 @@ updateConfig = \ config, parserDataLst ->
     if List.isEmpty parserDataLst == Bool.true then
         Ok config
     else
-        modifHandlers =
-            Dict.empty {}
-            |> Dict.insert Color colorUpdate
-            |> Dict.insert Regex regexUpdate
-            |> Dict.insert Blacklist blacklistUpdate
-            |> Dict.insert LogicalAnd andUpdate
 
         modifyPattern: OperationType, PatternType -> Result [Pattern PatternType] Str
         modifyPattern = \ operation, pattern ->
@@ -475,7 +460,7 @@ updateConfig = \ config, parserDataLst ->
                                     when andTypesConversionBack modifiedPat is
                                         Ok convertPat ->
                                             Ok (Allow (LogicalAnd (List.append head convertPat)))
-                                        Err message -> Err "unknown problem during command processing"
+                                        Err _ -> Err "unknown problem during command processing"
                                 Err message -> Err message
                 _ ->
                     when type is
@@ -545,7 +530,7 @@ updateConfig = \ config, parserDataLst ->
                                                         when andTypesConversionBack modifiedPat is
                                                             Ok convertPat ->
                                                                 Ok (Pattern (Allow (LogicalAnd (List.append head convertPat))))
-                                                            Err message -> Err "unknown problem during command processing"
+                                                            Err _ -> Err "unknown problem during command processing"
                                                     Err message -> Err message
 
                                     (Blacklist (LogicalAnd lst)) ->
@@ -557,7 +542,7 @@ updateConfig = \ config, parserDataLst ->
                                                         when andTypesConversionBack modifiedPat is
                                                             Ok convertPat ->
                                                                 Ok (Pattern (Blacklist (LogicalAnd (List.append head convertPat))))
-                                                            Err message -> Err "unknown problem during command processing"
+                                                            Err _ -> Err "unknown problem during command processing"
                                                     Err message -> Err message
                                     _ ->
                                         when type is
@@ -593,7 +578,7 @@ updateConfig = \ config, parserDataLst ->
                                                         when andTypesConversionBack modifiedPat is
                                                             Ok convertPat ->
                                                                 Ok (Section {before: before, after: after, pattern : (Allow (LogicalAnd (List.append head convertPat)))})
-                                                            Err message -> Err "unknown problem during command processing"
+                                                            Err _ -> Err "unknown problem during command processing"
                                                     Err message -> Err message
                                     _ ->
                                         when type is
@@ -606,7 +591,7 @@ updateConfig = \ config, parserDataLst ->
                                             _ -> Err "unknown problem during command processing"
                             Modifier _ ->
                                 Err "unknown problem during command processing"
-                            Limit lst ->
+                            Limit _ ->
                                 Err "unknown problem during command processing"))
                     |> (\ processedResult ->
                         when processedResult is
@@ -698,61 +683,36 @@ regexUpdate = \ pattern ->
 andUpdate : PatternType -> Result PatternType Str
 andUpdate = \ pattern ->
     when pattern is
-        Allow (Plain pat) ->
+        Allow (Plain _) ->
             Ok (Allow (LogicalAnd []))
-        Color (Plain pat) ->
+        Color (Plain _) ->
             Err "unsupported option"
-        Blacklist (Plain pat) ->
+        Blacklist (Plain _) ->
             Ok (Blacklist (LogicalAnd []))
         _ -> Err "unsupported option"
 
-createPatternToPattern : ParsingResultType, ConfigType -> Result ConfigType Str
-createPatternToPattern = \  parsResult, config ->
-    { command: com, modifiers : mod, patterns : lst } = config
-    when com is
-        Search  ->
-            when (
-                Regex.getValue [0] 0 parsResult.captured,
-                Regex.getValue [1] 0 parsResult.captured,
-                Regex.getValue [2] 0 parsResult.captured,
-                Regex.getValue [3] 0 parsResult.captured)  is
-                (Ok pat1,Ok pat2, Ok pat3, Ok pat4) ->
-                    when (pat1, pat2, pat3, pat4) is
-                        ([_,..],[_,..],[_,..],[_,..])->
-                            Ok { config & command : FromPatternToPattern (Allow (Regex (Utils.utfToStr pat2))) (Allow (Regex (Utils.utfToStr pat4) )) }
-                        ([],[_,..],[_,..],[_,..])->
-                            Ok { config & command : FromPatternToPattern (Allow (Plain(Utils.utfToStr pat2))) (Allow (Regex (Utils.utfToStr pat4))) }
-                        ([_,..],[_,..],[],[_,..])->
-                            Ok { config & command : FromPatternToPattern (Allow (Regex (Utils.utfToStr pat2))) (Allow (Plain (Utils.utfToStr pat4))) }
-                        ([],[_,..],[],[_,..])->
-                            Ok { config & command : FromPatternToPattern (Allow (Plain (Utils.utfToStr pat2))) (Allow (Plain (Utils.utfToStr pat4))) }
-                        _ ->
-                            Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
-                _ -> Err "Internal application error when processing \(Utils.utfToStr parsResult.matched) comand"
-        _ -> Ok config
+# mergeConfigs : ConfigType, ConfigType  -> ConfigType
+# mergeConfigs = \configDest, newConfig ->
+#     updateCommand  =
+#         when (configDest.command, newConfig.command ) is
+#             (_,None) -> configDest.command
+#             (None, _ ) | (Search,_)-> newConfig.command
+#             (SearchSection sectionDest, SearchSection sectionNew) ->
+#                 SearchSection (List.concat sectionDest sectionNew)
+#             _ -> configDest.command
 
-mergeConfigs : ConfigType, ConfigType  -> ConfigType
-mergeConfigs = \configDest, newConfig ->
-    updateCommand  =
-        when (configDest.command, newConfig.command ) is
-            (_,None) -> configDest.command
-            (None, _ ) | (Search,_)-> newConfig.command
-            (SearchSection sectionDest, SearchSection sectionNew) ->
-                SearchSection (List.concat sectionDest sectionNew)
-            _ -> configDest.command
+#     mergedlimit = List.concat  configDest.limit newConfig.limit
 
-    mergedlimit = List.concat  configDest.limit newConfig.limit
+#     mergedmodifiers = Set.union configDest.modifiers newConfig.modifiers
+#     mergedPatterns = List.concat  configDest.patterns newConfig.patterns
 
-    mergedmodifiers = Set.union configDest.modifiers newConfig.modifiers
-    mergedPatterns = List.concat  configDest.patterns newConfig.patterns
-
-    {
-        configDest  &
-            command : updateCommand,
-            limit : mergedlimit,
-            patterns: mergedPatterns,
-            modifiers: mergedmodifiers,
-    }
+#     {
+#         configDest  &
+#             command : updateCommand,
+#             limit : mergedlimit,
+#             patterns: mergedPatterns,
+#             modifiers: mergedmodifiers,
+#     }
 
 recoverConfigFromInput : List Str -> Result ConfigType Str
 recoverConfigFromInput = \commandLst ->
@@ -837,7 +797,7 @@ handleUserCommand = \ state, commandPatRaw ->
                                                 Ok commands ->
                                                     Task.ok  (List.concat  lst (Utils.tokenize commands))
                                                 Err _ -> Task.err  "fail to load commands"
-                                        Err message ->  result
+                                        Err _ ->  result
                                 )
                             comFromFilesResult <-gatherPat |> Task.attempt
                             when comFromFilesResult is

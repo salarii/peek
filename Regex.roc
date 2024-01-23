@@ -170,13 +170,6 @@ getPrioToken = \ patterns ->
                 Err message -> Err message
         )
 
-
-charToUtf : Str -> U8
-charToUtf = \ char ->
-    Str.toUtf8 char
-    |> List.first
-    |> Result.withDefault 0
-
 emptyNode : TreeNodeType
 emptyNode = { locked : Bool.false, children :  [], value : [] }
 
@@ -198,17 +191,17 @@ changeValue = \ tree, id, value->
         Ok newTree -> newTree
         _ -> tree
 
-cntLivesValues : TreeType, I32->  Nat
-cntLivesValues = \ tree, id ->
-    when Dict.get tree.content id is
-        Ok node ->
-            if List.isEmpty node.children == Bool.true then
-                List.len node.value
-            else
-                List.walk node.children 0 ( \cnt, childId ->
-                    cnt + cntLivesValues tree childId
-                    )
-        Err _ -> 0
+# cntLeavesValues : TreeType, I32->  Nat
+# cntLeavesValues = \ tree, id ->
+#     when Dict.get tree.content id is
+#         Ok node ->
+#             if List.isEmpty node.children == Bool.true then
+#                 List.len node.value
+#             else
+#                 List.walk node.children 0 ( \cnt, childId ->
+#                     cnt + cntLeavesValues tree childId
+#                     )
+#         Err _ -> 0
 
 addElement : TreeType, I32, TreeNodeType ->  TreeType
 addElement = \ tree, parentId ,node ->
@@ -248,7 +241,7 @@ modifyActive = \ tree, headId, op, allLevels ->
 changeElement : TreeType, I32, TreeNodeType ->  TreeType
 changeElement = \ tree, id ,node ->
     when Dict.get tree.content id  is
-        Ok element ->
+        Ok _ ->
             updatedContent =
                 Dict.remove tree.content id
                 |> Dict.insert id node
@@ -394,12 +387,12 @@ getDirectly = \ tree, id  ->
             Ok node.value
         Err _ -> Err  "no such value"
 
-getDirectlyChildrenCnt : TreeType, I32 -> Result (Nat)  Str
-getDirectlyChildrenCnt = \ tree, id  ->
-    when Dict.get tree.content id  is
-        Ok node ->
-            Ok (List.len node.children )
-        Err _ -> Err  "no such node"
+# getDirectlyChildrenCnt : TreeType, I32 -> Result (Nat)  Str
+# getDirectlyChildrenCnt = \ tree, id  ->
+#     when Dict.get tree.content id  is
+#         Ok node ->
+#             Ok (List.len node.children )
+#         Err _ -> Err  "no such node"
 
 
 createParsingRecord : List TokenType, MetaType, StrictType -> ParsingResultType
@@ -672,23 +665,6 @@ checkMatching = \ utfLst, reg  ->
                 Err _ ->
                     Inactive {state & meta : Inactive }
             )
-    regeneratePat : ParsingResultType ->[Old ParsingResultType, New ParsingResultType ]
-    regeneratePat = (\  state  ->
-        when List.first state.current is
-            Ok pat ->
-                Old state
-            Err _ ->
-                New {state & meta : Inactive }  )
-
-    checkLastListEmpty : List (List a) -> Bool
-    checkLastListEmpty = (\ listOfLists  ->
-            when List.last listOfLists is
-                Ok lst ->
-                    List.isEmpty lst
-                Err _ ->
-                    Bool.false
-
-        )
     # workaround: I haven't predicted that this information will be needed.
     # on earlier stages it would be cleaner (maybe)to extract this but not with this design
     # I just missed that opportunity and now I don't want to rip through entire thing to make it right
@@ -745,7 +721,7 @@ checkMatching = \ utfLst, reg  ->
                     manageIteration = ( \ inProcessedReg, curState ->
 
                         when getFirstPat inProcessedReg is
-                            Inactive patternSet ->
+                            Inactive _ ->
                                 if  outState.cnt > List.len utfLst then
                                     List.append curState { inProcessedReg & current : [], matchFound : Bool.true, left : [], meta : Inactive}
                                 else
@@ -761,7 +737,7 @@ checkMatching = \ utfLst, reg  ->
                                         else
                                             updatedState.captured
                                     when matchUtf utf  matchThis.pattern is
-                                        Consume updatedToken ->
+                                        Consume _ ->
                                             if outState.cnt > List.len utfLst then
                                                 curState
                                             else
@@ -801,67 +777,65 @@ checkMatching = \ utfLst, reg  ->
         else
             updatedParsResult )
 
-printSerie : SerieType  -> Str
-printSerie = ( \ serie ->
-    when serie is
-        AtLeastOne -> "\nAtLeastOne"
-        ZeroOrMore -> "\nZeroOrMore"
-        MNTimes _ _ -> "\nMNTimes"
-        NoMorethan _ -> "\nNoMorethan"
-        NTimes _ -> "\nNTimes"
-        Once -> "\nOnce"
-        _ ->  "\nUnknown serie"
+# printSerie : SerieType  -> Str
+# printSerie = ( \ serie ->
+#     when serie is
+#         AtLeastOne -> "\nAtLeastOne"
+#         ZeroOrMore -> "\nZeroOrMore"
+#         MNTimes _ _ -> "\nMNTimes"
+#         NoMorethan _ -> "\nNoMorethan"
+#         NTimes _ -> "\nNTimes"
+#         Once -> "\nOnce"
+# )
 
-)
+# printTag : SearchRegexTagsType -> Str
+# printTag = (  \ tag ->
 
-printTag : SearchRegexTagsType -> Str
-printTag = (  \ tag ->
+#         when  tag  is
+#             Character  val ->
+#                 extractedChar =
+#                     when Str.fromUtf8 [val] is
+#                         Ok str -> str
+#                         Err _ -> "  some weird problem in  extracting character token "
+#                 "\n"
+#                 |> Str.concat  "character : "
+#                 |> Str.concat  extractedChar
+#             Dot -> "\nDot"
+#             CaptureOpen ->
+#                 "\nCapture  Open"
+#             CaptureClose ->
+#                 "\nCapture  Close"
+#             Separator ->
+#                 "\nSeparator"
+#             Sequence  array  ->
+#                 "\nseq : -> "
+#                 |> Str.concat (printTokens array)
+#                 |> Str.concat "\nexit sequence  <- "
+#             Digit -> "\nDigit"
+#             NoDigit -> "\nNo Digit"
+#             CharacterSet _ ->
+#                 "\nCharacter set"
+#             LimitRanges _ -> "\nLimit Ranges set"
+#             ReverseLimitRanges _ -> "\nReverse limit Ranges"
+#             Except tags ->
+#                 "\nExcept:"
+#                 |> Str.concat (List.walk tags "" (\ print, inTag ->
+#                     Str.concat print (printTag inTag) ))
+#             Only tags ->
+#                 "\nOnly:"
+#                 |> Str.concat (List.walk tags "" (\ print, inTag ->
+#                     Str.concat print (printTag inTag) ))
+#             _ ->
+#                 "\n unknown token "
+#         )
 
-        when  tag  is
-            Character  val ->
-                extractedChar =
-                    when Str.fromUtf8 [val] is
-                        Ok str -> str
-                        Err _ -> "  some weird problem in  extracting character token "
-                "\n"
-                |> Str.concat  "character : "
-                |> Str.concat  extractedChar
-            Dot -> "\nDot"
-            CaptureOpen ->
-                "\nCapture  Open"
-            CaptureClose ->
-                "\nCapture  Close"
-            Separator ->
-                "\nSeparator"
-            Sequence  array  ->
-                "\nseq : -> "
-                |> Str.concat (printTokens array)
-                |> Str.concat "\nexit sequence  <- "
-            Digit -> "\nDigit"
-            NoDigit -> "\nNo Digit"
-            CharacterSet _ ->
-                "\nCharacter set"
-            LimitRanges _ -> "\nLimit Ranges set"
-            ReverseLimitRanges _ -> "\nReverse limit Ranges"
-            Except tags ->
-                "\nExcept:"
-                |> Str.concat (List.walk tags "" (\ print, inTag ->
-                    Str.concat print (printTag inTag) ))
-            Only tags ->
-                "\nOnly:"
-                |> Str.concat (List.walk tags "" (\ print, inTag ->
-                    Str.concat print (printTag inTag) ))
-            _ ->
-                "\n unknown token "
-        )
-
-printTokens : List  TokenType -> Str
-printTokens = (  \ arrayPrt ->
-    List.walk arrayPrt "" (  \ inState , token ->
-        Str.concat  inState (printTag token.tag)
-        |> Str.concat (printSerie token.serie)
-        )
-)
+# printTokens : List  TokenType -> Str
+# printTokens = (  \ arrayPrt ->
+#     List.walk arrayPrt "" (  \ inState , token ->
+#         Str.concat  inState (printTag token.tag)
+#         |> Str.concat (printSerie token.serie)
+#         )
+# )
 checkMatchingValidity : ParsingResultType -> Bool
 checkMatchingValidity = \ matchingResult ->
     when matchingResult.strict is
@@ -870,18 +844,6 @@ checkMatchingValidity = \ matchingResult ->
             List.isEmpty  matchingResult.missed
         Back -> List.isEmpty  matchingResult.left
         Both -> (List.isEmpty  matchingResult.missed) && (List.isEmpty  matchingResult.left)
-
-getRegexTokens : {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} -> Result (List  TokenType) Str
-getRegexTokens = \ result  ->
-    when result.tag is
-        Character->
-            when List.first result.parsedResult.matched is
-                Ok  matched  ->
-                    Ok [(createToken  ( Character matched )  Once Bool.false )]
-                Err  _  -> Err "character  tag problem"
-        _ ->
-            Err "wrong tag"
-
 
 regexCreationStage : Str, List TokenPerRegexType, List TokenPerRegexType, List {tag : RecoverRegexTagsType,parsedResult : ParsingResultType} -> Result ( List TokenType )  Str
 regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
@@ -903,7 +865,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
                                         when elem.tag is
                                             Sequence  chain ->
                                                 when List.last chain is
-                                                    Ok lastOnChain ->
+                                                    Ok _ ->
                                                         closeLast = (\  lst, seq ->
                                                             Sequence  seqChain = seq
                                                             when List.last seqChain is
@@ -1097,7 +1059,7 @@ regexCreationStage  = \ str, patterns, onlyExceptPatterns, currReg ->
 
                                 BackSlash->
                                     when result.parsedResult.matched is
-                                        [backslash, sign ] ->
+                                        [_, sign ] ->
                                             Ok { state &  lst : modifLastInChain state.lst  (createToken (Character sign) Once (doCapture state.capture)) }
                                         _ -> Err "back slash parser  match problem"
 
@@ -1222,29 +1184,6 @@ parseStr = \ str, pattern ->
                                 state
                         else
                             parsResult ))
-                Err message ->
-                    Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
-
-        _ -> Err   "This is internal regex error not your fault\n"
-
-
-parseStrMagicFull : Str, Str, MagicType -> Result ( List ParsingResultType)  Str
-parseStrMagicFull = \ str, pattern, magic ->
-    when magic is
-        (Ok mainRegex, Ok onlyExceptRegex) ->
-
-            tokensFromUserInputResult = regexCreationStage pattern mainRegex onlyExceptRegex []
-
-            when tokensFromUserInputResult is
-                Ok tokensFromUserInput ->
-                    independentChainlst = splitChainOnSeparators tokensFromUserInput []
-
-                    Ok (List.walk independentChainlst []  ( \ state, regexParser ->
-                        parsResult = checkMatching (Str.toUtf8  str ) regexParser
-                        if parsResult.matchFound == Bool.true then
-                            List.append  state parsResult
-                        else
-                            state ))
                 Err message ->
                     Err (Str.concat "You screwed up something, or not supported construction, or internal bug \n"  message )
 

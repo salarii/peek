@@ -16,9 +16,7 @@ interface  System
         switchHistory]
 
     imports [
-        pf.Stdin, 
-        pf.Stdout, 
-        pf.Task.{ Task, await, loop },
+        pf.Task.{ Task },
         pf.Cmd,
         pf.Cmd.{Cmd},
         pf.Cmd.{Output },
@@ -32,8 +30,8 @@ interface  System
         ]
 
 # the goal of embeded terminal is to just facilitate navigation between locations
-# ls, cd stuff like that should work 
-# I want to be able to locate and load log files for further processing 
+# ls, cd stuff like that should work
+# I want to be able to locate and load log files for further processing
 # maybe some other simple operations nothing more (piping, bash scripts, I don't know how to do and I don't want even try )
 
 GuessEffectType : [Extend Str, ListDir (List Str), None]
@@ -46,30 +44,30 @@ executeCommand = \ state, lstCmd ->
         if Set.isEmpty  dirInfo then
                 Utils.tokenizeNewLine out
                 |> grouping  4 140
-                |> printGroup 
+                |> printGroup
         else
                 Utils.tokenizeNewLine out
                 |> grouping  4 140
                 |> printGroupWithSet dirInfo
-            
+
     execute : Cmd, Task ( Bool, Str ) * -> Task StateType *
     execute = \ command, lsFormat ->
         result <- Cmd.output  command |> Task.attempt
-            when result is  
+            when result is
                 Ok out ->
                     lsFormatResult <- lsFormat |> Task.attempt
-                    when lsFormatResult is 
-                    Ok format -> 
+                    when lsFormatResult is
+                    Ok format ->
                         if format.0 == Bool.true then
                             lsOut = (Utils.utfToStr out.stdout)
                             if Str.isEmpty format.1 then
-                                Task.ok  (State.setCommandOutput state (formatLsType lsOut (Set.empty {} )) )   
-                            else 
+                                Task.ok  (State.setCommandOutput state (formatLsType lsOut (Set.empty {} )) )
+                            else
                                 tokenized = Utils.tokenizeNewLine lsOut
 
                                 tokenized
                                 |> List.walk (Task.ok (Set.empty {})) (\ dirSearch, line ->
-                                    when  Utils.tokenize line is 
+                                    when  Utils.tokenize line is
                                         [entry] ->
                                             dirLstResult <- dirSearch |> Task.attempt
                                             # assume // will work as "/"
@@ -82,27 +80,27 @@ executeCommand = \ state, lstCmd ->
                                                     if (Result.withDefault isDir Bool.false ) == Bool.true then
                                                         Task.ok (Set.insert dirSet entry)
                                                     else
-                                                         Task.ok dirSet 
-                                                Err _ -> dirSearch 
+                                                         Task.ok dirSet
+                                                Err _ -> dirSearch
                                         _ -> dirSearch )
-                                |> ( \ allDirs -> 
+                                |> ( \ allDirs ->
                                     dirs <- allDirs |> Task.attempt
                                     colorInfo = (Result.withDefault dirs  (Set.empty {}))
                                     Task.ok  (State.setCommandOutput state (formatLsType lsOut colorInfo))
-                                    )  
+                                    )
                         else
                             Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stdout))
-                    Err _ ->         
-                        Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stdout)) 
+                    Err _ ->
+                        Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stdout))
 
-                        
-                Err (out,err) ->
+
+                Err (out,_) ->
                     Task.ok  (State.setCommandOutput state (Utils.utfToStr out.stderr))
-    
+
     executeCd : Str -> Task StateType *
     executeCd = \ path ->
         if Str.isEmpty path == Bool.true then
-            
+
             systemData = State.getSystemData state
             setEnv <-Env.setCwd (Path.fromStr systemData.homePath) |> Task.attempt
             when setEnv is
@@ -123,52 +121,52 @@ executeCommand = \ state, lstCmd ->
                     else
                         Task.ok state
                 Err _ -> Task.ok state
-                
+
     analyzeLsData : List Str, Bool -> Task ( Bool, Str) *
     analyzeLsData = \ args, isLs ->
-        if isLs == Bool.true then 
-            when args is 
+        if isLs == Bool.true then
+            when args is
                 [] ->
                     Task.ok (Bool.true, ".")
                 _ ->
                     # I know it is weird but things like that should work,
-                    # and they don't. This is kind of weakness of this Task concept. (maybe is just me but working, tasks <-> other stuff, is difficult ) 
+                    # and they don't. This is kind of weakness of this Task concept. (maybe is just me but working, tasks <-> other stuff, is difficult )
                     #pathResult <- List.walkUntil args ( Task.ok "")  (\ _state, arg ->
                     #            isDir <- isDirectoryPath arg |> Task.attempt
-                    #            if (Result.withDefault isDir Bool.false ) == Bool.true then 
+                    #            if (Result.withDefault isDir Bool.false ) == Bool.true then
                     #                Break (Task.ok arg)
-                    #            else 
+                    #            else
                     #                Continue (Task.ok "")
                     #        )
                     #    |> Task.attempt
                     pathResult <- List.walk args ( Task.ok "")  (\ spoted, arg ->
-                                isEnd <- spoted |> Task.attempt 
+                                isEnd <- spoted |> Task.attempt
                                 if Str.isEmpty (Result.withDefault isEnd "") == Bool.false then
                                     spoted
                                 else
                                     isDir <- isDirectoryPath arg |> Task.attempt
-                                    if (Result.withDefault isDir Bool.false ) == Bool.true then 
+                                    if (Result.withDefault isDir Bool.false ) == Bool.true then
                                         Task.ok arg
-                                    else 
+                                    else
                                         Task.ok ""
                             )
                         |> Task.attempt
                     Task.ok (Bool.true, Result.withDefault pathResult "")
-        else 
+        else
             Task.ok (Bool.false, "")
 
-    when lstCmd is 
+    when lstCmd is
         [] -> Task.ok state
         [name] ->
             if name == "cd" then
-                executeCd "" 
+                executeCd ""
             else
                 command =
                     Cmd.new name
                 execute command (analyzeLsData [] (name == "ls"))
         [name, .. as args] ->
             if name == "cd" then
-                when args is 
+                when args is
                     [arg] -> executeCd arg
                     _ -> Task.ok state
             else
@@ -179,13 +177,13 @@ executeCommand = \ state, lstCmd ->
 
 guessPath : Str -> Task GuessEffectType *
 guessPath = \ pathRaw ->
-    path = 
+    path =
         if Str.startsWith pathRaw "fm@" == Bool.true then
-            Str.replaceFirst pathRaw "fm@" "" 
-            |> (\ str -> 
+            Str.replaceFirst pathRaw "fm@" ""
+            |> (\ str ->
                 if Str.isEmpty str then
                     "./"
-                else 
+                else
                     str)
         else
             pathRaw
@@ -193,14 +191,14 @@ guessPath = \ pathRaw ->
     if Result.withDefault isDir Bool.false == Bool.false then
         splitted = stripPath path
         listedBase <- listEntries splitted.before |> Task.attempt
-        when listedBase is 
+        when listedBase is
             Ok base ->
                 if List.isEmpty base then
                     Task.ok None
                 else
                     cleanPath =
-                        List.map base (\ subPath -> 
-                            when Str.splitLast subPath "/" is 
+                        List.map base (\ subPath ->
+                            when Str.splitLast subPath "/" is
                                 Ok splited -> splited.after
                                 Err _ -> subPath
                             )
@@ -208,37 +206,37 @@ guessPath = \ pathRaw ->
             Err _ -> Task.ok None
     else
         listedTop <- listEntries path |> Task.attempt
-        when listedTop is 
+        when listedTop is
             Ok listed ->
-                when listed is 
+                when listed is
                     [] ->
                         Task.ok None
                     [..,elem] ->
-                        when Str.toUtf8 path is 
-                            [..,'/'] -> 
+                        when Str.toUtf8 path is
+                            [..,'/'] ->
                                 if List.len listed == 1 then
                                     Task.ok (Extend ((stripPath elem).after))
-                                else 
+                                else
                                     Task.ok (ListDir listed)
                             _ ->
                                 Task.ok (Extend "/")
             Err _ -> Task.ok None
-        
+
 isDirectoryPath : Str -> Task Bool  *
 isDirectoryPath = \ str ->
     command =
         Cmd.new "test"
         |> Cmd.args ["-d",  str]
-        
+
     result <- Cmd.status  command |> Task.attempt
-    when result is  
-        Ok out ->
+    when result is
+        Ok _ ->
             Task.ok Bool.true
         Err _ ->
             Task.ok Bool.false
 
 listEntries : Str -> Task (List Str) *
-listEntries = \ path -> 
+listEntries = \ path ->
     accessResult <-Dir.list  (Path.fromStr path) |> Task.attempt
     when accessResult is
          Ok fileLst ->
@@ -246,28 +244,28 @@ listEntries = \ path ->
             List.walk fileLst [] (\ state, item->
                 List.append  state (Path.display item)
             )
-            |> Task.ok 
-         Err err -> Task.ok [] 
-            
+            |> Task.ok
+         Err _ -> Task.ok []
+
 updateData : StateType -> Task StateType *
-updateData = \ state -> 
+updateData = \ state ->
     currentResult <- Env.cwd  |>  Task.attempt
-    when currentResult is 
+    when currentResult is
         Ok current ->
             res <-Env.var "HOME" |>  Task.attempt
-            when res is 
+            when res is
                 Ok homeDir ->
                     Task.ok (
-                        (State.setSystemData 
+                        (State.setSystemData
                             state
                             { homePath : homeDir, current : Path.display current }
                         )
                         |> State.updatePrompt
                     )
-                Err _ -> 
+                Err _ ->
                     Task.ok state
         Err _ -> Task.ok state
-    
+
 
 grouping : List Str, Nat, Nat ->  { content: List Str, colCnt : Nat }
 grouping = \ textLst, seaparatorLen, lineSize ->
@@ -301,9 +299,9 @@ grouping = \ textLst, seaparatorLen, lineSize ->
                                 [(List.append col1 item), col2]
                         [col] -> [List.append col item]
                         _ -> [])
-            
+
             List.map grouped (\ lst ->
-                
+
                 List.walk lst 0 ( \ len,  word ->
                     currentLen = List.len (Str.toUtf8 word)
                     if currentLen > len then
@@ -314,26 +312,26 @@ grouping = \ textLst, seaparatorLen, lineSize ->
                 if ((List.walk lenArr 0 (\ len, elem -> len + elem ))
                     + colCnt * seaparatorLen) > lineSize then
                     findGroup (colCnt - 1)
-                else 
+                else
                     List.map2 grouped lenArr (\ group, len ->
                             List.map group ( \ word ->
                                 Str.concat word  (Str.repeat " " (len + seaparatorLen - (List.len (Str.toUtf8 word)) ) )
                     ))
-                    |> (\ adjusted -> 
+                    |> (\ adjusted ->
                             gather = \ current, set ->
-                                when current is 
+                                when current is
                                     [col1,..] ->
                                         if List.isEmpty col1 == Bool.true then
                                             set
                                         else
                                             updatedSet = List.walk current set ( \ state, lst ->
-                                                when lst is 
+                                                when lst is
                                                     [head,..] -> List.append state head
-                                                    [] -> state ) 
+                                                    [] -> state )
                                             sliced = List.map current (\ lst ->
                                                 List.dropFirst lst 1)
                                             gather  sliced  updatedSet
-                                             
+
                                     _-> textLst
                             gather adjusted  []
                         )
@@ -366,10 +364,10 @@ checkListOfDirsGiveSet = \ dirs ->
 
     onlyDirsResult<-onlyDirsTask |> Task.attempt
     Task.ok ( Set.fromList (Result.withDefault onlyDirsResult []) )
-     
+
 
 printGroup :  { content: List Str, colCnt : Nat } -> Str
-printGroup = \ group -> 
+printGroup = \ group ->
     List.walk group.content ("",0) (\state, word ->
         if state.1 == group.colCnt - 1 then
             (Str.concat state.0 (Str.concat word "\n\r"), 0 )
@@ -379,13 +377,13 @@ printGroup = \ group ->
     |>( \ result -> Str.concat result.0 "\n\r")
 
 printGroupWithSet :  { content: List Str, colCnt : Nat }, Set Str -> Str
-printGroupWithSet = \ group, set -> 
+printGroupWithSet = \ group, set ->
     List.map group.content  ( \ word ->
         if Set.contains set (Str.trimEnd word)  == Bool.true then
             Utils.withColor word Red
         else
             word
-    ) 
+    )
     |> List.walk  ("",0) (\state, word ->
         if state.1 == group.colCnt - 1 then
             (Str.concat state.0 (Str.concat word "\n\r"), 0 )
@@ -394,23 +392,9 @@ printGroupWithSet = \ group, set ->
     )
     |>( \ result -> Str.concat result.0 "\n\r")
 
-directoryMap : Str, List Str -> Task (List Bool)  *
-directoryMap = \ path, items ->
-    List.map items (\ item ->
-        path
-        |> Str.concat "/"
-        |> Str.concat item )
-    |> List.walk (Task.ok []) ( \ state, itemPath ->
-        lst <- state |> Task.await  
-        isDirectoryResult <- isDirectoryPath itemPath |> Task.attempt  
-        when isDirectoryResult is 
-           Ok isDirectory -> Task.ok (List.append lst isDirectory )
-           Err _ -> Task.ok (List.append lst Bool.false)
-        )
-
 stripPath : Str -> {before : Str, after: Str}
 stripPath = \path ->
-    when Str.splitLast path "/" is 
+    when Str.splitLast path "/" is
         Ok splited -> {splited & before : Str.concat splited.before "/" }
         Err _ -> {before : "./", after:path }
 
@@ -418,21 +402,21 @@ guessEffect : List Str, Str -> GuessEffectType
 guessEffect = \ lst, pattern  ->
     if Str.isEmpty pattern == Bool.true then
         None
-    else 
-        when findSubset lst pattern is 
+    else
+        when findSubset lst pattern is
             [] -> None
-            subset -> 
-                if List.contains subset "" == Bool.true then 
+            subset ->
+                if List.contains subset "" == Bool.true then
                     ListDir subset
                 else
                     List.map subset ( \ word ->
-                        when Str.splitFirst word pattern is 
+                        when Str.splitFirst word pattern is
                             Ok splited -> splited.after
                             Err _ -> word
                     )
-                    |> findCommon 
+                    |> findCommon
                     |> ( \ common ->
-                        if Str.isEmpty common == Bool.true then 
+                        if Str.isEmpty common == Bool.true then
                             ListDir subset
                         else
                             Extend common
@@ -440,26 +424,26 @@ guessEffect = \ lst, pattern  ->
 
 findSubset : List Str, Str -> List Str
 findSubset = \ lst, pattern ->
-    List.walk lst  [] ( \ subset, word -> 
+    List.walk lst  [] ( \ subset, word ->
 
         if Str.startsWith word pattern == Bool.true then
-            List.append subset word 
+            List.append subset word
         else
             subset
     )
 
 findCommon : List Str -> Str
-findCommon = \ lst -> 
+findCommon = \ lst ->
     List.map lst  ( \ word -> Str.toUtf8 word )
     |> List.sortWith ( \ left, right ->
         if List.len left > List.len right then
             GT
         else if List.len left == List.len right then
             EQ
-        else  
-            LT) 
+        else
+            LT)
     |> (\ utfLst ->
-        when utfLst is 
+        when utfLst is
             [first, .. as tail ] ->
                 List.walk tail first (\ current, newLst ->
                     List.map2 current newLst ( \ lChar, rChar ->
@@ -467,28 +451,14 @@ findCommon = \ lst ->
                             lChar
                         else
                             0 ))
-                |> List.walkUntil "" ( \ common,char -> 
+                |> List.walkUntil "" ( \ common,char ->
                     if char != 0 then
                         Continue ( Str.concat common ( Utils.utfToStr [char] ))
-                    else 
+                    else
                         Break common )
             [] -> ""
-          ) 
+          )
 
-
-isFilePath : Str -> Task Bool  *
-isFilePath = \ str ->
-    command =
-        Cmd.new "test"
-        |> Cmd.args ["-f",  str]
-        
-    result <- Cmd.status  command |> Task.attempt
-    when result is  
-        Ok out ->
-            Task.ok Bool.true
-        Err _ ->
-            Task.ok Bool.false
-            
 systemFile : Str
 systemFile = "/sys"
 
@@ -496,28 +466,28 @@ searchFile : Str
 searchFile = "/search"
 
 switchHistory : StateType, AppModeType -> StateType
-switchHistory = \ state, mode -> 
+switchHistory = \ state, mode ->
     currentHistory = (State.getTerminalState state).commandHistory
     comHistory = State.getCommandHistory state
-    when mode is 
-        System -> 
+    when mode is
+        System ->
             State.setCommandHistory state {comHistory & search : currentHistory}
             |> State.setTerminalHistory comHistory.sys
-        Search -> 
+        Search ->
             State.setCommandHistory state {comHistory & sys : currentHistory}
             |> State.setTerminalHistory comHistory.search
-        _ -> state  
-             
+        _ -> state
+
 setupHistory : StateType -> Task StateType *
-setupHistory = \ state -> 
+setupHistory = \ state ->
     manipulateStore state setupHistoryInternal
-    
+
 storeHistory : StateType -> Task StateType *
-storeHistory = \ state -> 
+storeHistory = \ state ->
     manipulateStore state storeHistoryInternal
-    
+
 storeHistoryInternal : StateType, Str -> Task StateType *
-storeHistoryInternal = \ state, storePath -> 
+storeHistoryInternal = \ state, storePath ->
     sytemTermHistory = Str.concat storePath systemFile
     searchTermHistory = Str.concat storePath searchFile
     mode = State.getAppMode state
@@ -526,20 +496,20 @@ storeHistoryInternal = \ state, storePath ->
         |> List.map ( \ cmd -> Utils.utfToStr cmd)
         |> List.takeFirst 500
         |> List.walk "" (\ out, cmd ->
-            Str.concat out  cmd 
+            Str.concat out  cmd
             |> Str.concat "\n" )
-    
-    when mode is 
-        System -> 
+
+    when mode is
+        System ->
             _<-File.writeUtf8 (Path.fromStr sytemTermHistory) toStore |> Task.attempt
             Task.ok state
         Search ->
             _<-File.writeUtf8 (Path.fromStr searchTermHistory) toStore |> Task.attempt
             Task.ok state
-        _ -> Task.ok  state   
-    
+        _ -> Task.ok  state
+
 setupHistoryInternal : StateType, Str -> Task StateType *
-setupHistoryInternal = \ state, storePath -> 
+setupHistoryInternal = \ state, storePath ->
     sytemTermHistory = Str.concat storePath systemFile
     searchTermHistory = Str.concat storePath searchFile
 
@@ -547,7 +517,7 @@ setupHistoryInternal = \ state, storePath ->
     sysHistory =
         when sysResult is
             Ok sys ->
-                
+
                 Utils.tokenizeNewLine sys
                 |> List.map ( \ com ->  Str.toUtf8 com )
             Err _ -> []
@@ -555,39 +525,39 @@ setupHistoryInternal = \ state, storePath ->
     searchHistory =
         when searchResult is
             Ok search ->
-                
+
                 Utils.tokenizeNewLine search
                 |> List.map ( \ com ->  Str.toUtf8 com )
             Err _ -> []
     Task.ok ( State.setCommandHistory  state {sys : sysHistory, search : searchHistory} )
-    
+
 manipulateStore : StateType, (StateType, Str-> Task StateType a) -> Task StateType a
 manipulateStore = \ state, operation ->
     homePath = (State.getSystemData state).homePath
     if Str.isEmpty homePath == Bool.false then
         storeDir = Str.concat homePath "/.peek"
         isDirectoryResult <-isDirectoryPath storeDir |>  Task.attempt
-        when isDirectoryResult is 
+        when isDirectoryResult is
             Ok isDirectory ->
                 if isDirectory == Bool.true then
                     operation state storeDir
-                else 
+                else
                     _<-Dir.create (Path.fromStr storeDir) |> Task.attempt
                     Task.ok state
             Err _ ->
                 Task.ok state
-        
-    else 
+
+    else
         Task.ok state
 
 loadCommands : Str -> Task (List Str) Str
-loadCommands = \ inFile -> 
+loadCommands = \ inFile ->
     commandsResult <- File.readUtf8 (Path.fromStr inFile) |> Task.attempt
-    when commandsResult is 
-        Ok commands -> 
+    when commandsResult is
+        Ok commands ->
             Task.ok (Utils.tokenize commands)
         Err _ -> Task.err  "fail to load commands"
-        
+
 # saveInFile : Str,  Str -> Task  {}  *
 # saveInFile = \ content, file ->
 #     File.writeUtf8 (Path.fromStr file) content

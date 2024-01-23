@@ -57,8 +57,6 @@ ConfigType : {
     regexMagic : MagicType, # remember to remove this one day : )
     }
 
-SearchSetupType : [ None, Configured ConfigType ]
-
 AppModeType : [System, Search, Quitting]
 
 TerminalLineStateType : {
@@ -82,7 +80,6 @@ StateType := {
     file: List Str,
     terminal : TerminalLineStateType,
     system : SystemDataType,
-    #config : SearchSetupType,
     mode : AppModeType,
     commandsHistory : { sys : HistoryType,  search : HistoryType},
     }
