@@ -184,6 +184,7 @@ createLineToLine = \ parsResult, _miniParser ->
 
 simpleHandlers =
     Dict.empty {}
+    |> Dict.insert "^(\\S+)->" simpleHandler # separate this case
     |> Dict.insert "^(\\S+)\\s" simpleHandler
 
 simpleHandler : ParsingResultType, MiniParserDataType -> Result ParserOutcomeType Str
@@ -262,8 +263,8 @@ evaluate = \ data, parser ->
                             elems = List.append head { last & pattern : simpleData }
                             Ok
                                 { parser &
-                                    current : configMiniParser,
-                                    data : { queue : updatedQueue |> List.prepend Config, content : elems } }
+                                    current : fullCommandMiniParser,
+                                    data : { queue : updatedQueue |> List.prepend FullCommands, content : elems } }
                 _ ->
                     Err "not implemented"
         ParserConfig configDataProcessed ->
@@ -469,6 +470,7 @@ updateConfig = \ config, parserDataLst ->
                                 Ok (Pattern modifiedPat) ->
                                     Ok modifiedPat
                                 Err message -> Err message
+                        Region -> Ok pattern
                         _ ->
                             Err "unknown problem during command processing"
 
@@ -478,8 +480,8 @@ updateConfig = \ config, parserDataLst ->
                     (if Set.contains data.config LogicalAnd &&
                        data.pattern == "Stop" then
                         when current.1 is
-                            Region ( Init (Allow (LogicalAnd _)), Empty ) ->
-                                Continue (Ok ( List.dropFirst current.0 1, current.1 ))
+                            Region ( Init (Allow (LogicalAnd lst)), Empty ) ->
+                                Continue (Ok ( List.dropFirst current.0 1, Region ( Init (Allow (LogicalAnd lst)), Init (Allow (Plain "") )) ))
                             _ ->
                                 Break (Ok ( List.dropFirst current.0 1, current.1 ))
                     else
@@ -501,7 +503,24 @@ updateConfig = \ config, parserDataLst ->
                                         (Empty, Empty ) ->
                                             Region ( Init (Allow (Plain data.pattern)), Empty )
                                         (Init pattern, Empty ) ->
-                                            Region (Init pattern, Init (Allow (Plain data.pattern)) )
+                                            when pattern is
+                                                    Allow ( Regex "") ->
+                                                        Region (Init (Allow (Regex data.pattern)), Empty)
+                                                    (Allow (LogicalAnd lst)) ->
+                                                        updatedPat =  Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))
+                                                        Region (Init updatedPat, Empty)
+                                                    _ ->
+                                                        Region (Init pattern, Init (Allow (Plain data.pattern)) )
+                                        (Init pattern1, Init pattern2 ) ->
+                                            when pattern2 is
+                                                    Allow ( Plain "") ->
+                                                        Region (Init pattern1, Init (Allow (Plain data.pattern)))
+                                                    Allow ( Regex "") ->
+                                                        Region (Init pattern1, Init (Allow (Regex data.pattern)))
+                                                    (Allow (LogicalAnd lst)) ->
+                                                        updatedPat = Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))
+                                                        Region (Init pattern1, Init updatedPat)
+                                                    _ -> Region (pat1, pat2 )
                                         _ -> Region (pat1, pat2 )
                                 _ -> current.1
                     (List.walkTry (Set.toList data.config) updated (\ inState, type  ->
@@ -561,12 +580,16 @@ updateConfig = \ config, parserDataLst ->
                                             Ok updatedPat ->
                                                 Ok (Region ( Init pattern1, Init updatedPat ))
                                             Err _ ->  Err "unknown problem during pattern to pattern command processing"
-                                    (Init pattern, Empty ) ->
-                                        when updateRegionPat pattern type is
-                                            Ok updatedPat ->
-                                                Ok (Region ( Init updatedPat, Empty ))
-                                            Err _ ->  Err "unknown problem during pattern to pattern command processing"
-                                    _ ->   Err "unknown problem during pattern to pattern command processing"
+                                    (Init _, Empty ) ->
+                                        Err "unknown problem during pattern to pattern command processing"
+                                    _ ->
+                                        when type is
+                                            Regex ->
+                                                Ok (Region ( Init (Allow (Regex "")), Empty ))
+                                            LogicalAnd ->
+                                                Ok (Region ( Init (Allow (LogicalAnd [])), Empty ))
+                                            _ ->
+                                                Err "unknown problem during pattern to pattern command processing"
                             Section {before: before, after: after, pattern : pat} ->
                                 when pat is
                                     Allow (LogicalAnd lst) ->
@@ -600,7 +623,8 @@ updateConfig = \ config, parserDataLst ->
                                     (Pattern (Allow (LogicalAnd _))) |
                                     (Pattern (Blacklist (LogicalAnd _))) |
                                     (Section {before: _, after: _, pattern : Allow (LogicalAnd _)}) |
-                                    (Region (_, _)) ->
+                                    (Region (_, Empty)) |
+                                    (Region (_, Init (Allow (LogicalAnd _)))) ->
                                         Continue (Ok ( List.dropFirst current.0 1, processed ))
                                     _ ->
                                         Break (Ok ( List.dropFirst current.0 1, processed ))
@@ -619,7 +643,9 @@ updateConfig = \ config, parserDataLst ->
                                 (Init pattern1, Init pattern2) ->
                                     when config.command is
                                         None |  Search ->
-                                            Ok {config & command : FromPatternToPattern pattern1 pattern2}
+                                            Ok {config & command : FromPatternToPattern [(pattern1, pattern2)]}
+                                        FromPatternToPattern regPat ->
+                                            Ok {config & command : FromPatternToPattern (List.append  regPat (pattern1, pattern2))}
                                         _ ->
                                             Err "can't use command like that"
                                 _ ->

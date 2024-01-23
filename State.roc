@@ -44,7 +44,7 @@ CommandType : [
     None,
     Search,
     SearchSection (List SectionType),
-    FromPatternToPattern PatternType PatternType,
+    FromPatternToPattern (List (PatternType, PatternType)),
     ]
 
 HistoryType : List (List U8)

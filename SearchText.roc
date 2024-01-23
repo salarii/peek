@@ -166,9 +166,8 @@ evalSearch = \ content, config ->
 
                         Err message -> { terminal: message, raw : "" }
                         )
-            FromPatternToPattern fromPat toPat ->
-                lst = [(fromPat, toPat)]
-                jointPat = List.walk lst [] ( \outLst, patDeq ->
+            FromPatternToPattern regLst ->
+                jointPat = List.walk regLst [] ( \outLst, patDeq ->
                     outLst
                     |> List.append patDeq.0
                     |> List.append patDeq.1
@@ -184,7 +183,7 @@ evalSearch = \ content, config ->
                 when (patternsProcessedResult, rangesProcessedResult )  is
                     (Ok patternsProcessed, Ok ranges ) ->
                         mergedLines = mergeLineProcessed patternsProcessed ranges
-                        List.map lst (\ pair  ->
+                        List.map regLst (\ pair  ->
                             List.walk mergedLines (Block,[],[]) (\state, line ->
                                 when line.status is
                                     Hit patterns ->
@@ -218,7 +217,7 @@ evalSearch = \ content, config ->
                                     Ok ((List.walk (List.dropLast searchResult 1) searchLst.2 ( \state, patLst ->
                                             mergeLineProcessed state patLst.2
                                     ))
-                                    |> List.walk  (Num.toU32 -1,[]) ( \ regions, line ->
+                                    |> List.walk  (Num.toU32 -2,[]) ( \ regions, line ->
                                             if regions.0 + 1 == line.number then
                                                 when regions.1 is
                                                     [] ->
