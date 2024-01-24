@@ -33,11 +33,11 @@ File Analyzing Mode Commands
 - Press Enter: Displays the entire log unaltered.
 - Enter Phrases: Typing 'phrase1 phrase2 phrase3' and pressing enter shows only lines with these phrases (no spaces allowed in phrases).
 - Blacklist Phrases: Typing 'b@phrase1 b@phrase2 b@phrase3' and pressing enter hides lines with these phrases.
-- Color Phrases: Typing 'c@phrase1 c@phrase2 c@phrase3' and pressing enter colors these phrases in all lines. Coloring is slow.
-- Regex Patterns: Typing 'r@pattern1 rc@pattern2 rb@pattern3' and pressing enter uses regex patterns. Lists lines with 'pattern1', excluding those with 'pattern3', and colors 'pattern2' if present. Regex processing is slow.
+- Color Phrases: Typing 'c@phrase1 c@phrase2 c@phrase3' and pressing enter colors these phrases in all lines.
+- Regex Patterns: Typing 'r@pattern1 rc@pattern2 rb@pattern3' and pressing enter uses regex patterns. Lists lines with 'pattern1', excluding those with 'pattern3', and colors 'pattern2' if present. Regex processing is very slow.
 - Numbered Lines: Typing 'nl@' with other commands and pressing enter numbers each line in the result.
 - And mode: 'and@( pattern1 pattern b@pattern3  )' in this mode of operation, only lines of text will be presented where the provided phrases and patterns are present.
-- Text Between Phrases/Patterns: Typing '->@phrase->r@pattern' and pressing enter shows text between lines containing the specified phrase or regex pattern.
+- Text Between two Phrases/Patterns: Typing '->@phrase ->r@pattern' and pressing enter shows text between lines containing the specified phrase or regex pattern.
 - Specific Line Ranges: Typing 's->100@', '100->e@', or '100->200@' and pressing enter shows text within these line ranges.
 - Surrounding Lines: Typing '^10@phrase1', '>10r@pattern', or '<10@phrase2' and pressing enter shows lines around the specified phrase or pattern.
 

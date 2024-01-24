@@ -485,151 +485,167 @@ updateConfig = \ config, parserDataLst ->
                             _ ->
                                 Break (Ok ( List.dropFirst current.0 1, current.1 ))
                     else
-                    updated =
-                        if Str.isEmpty data.pattern == Bool.true then
-                            current.1
-                        else
-                            when current.1 is
+                        updated =
+                            if Str.isEmpty data.pattern == Bool.true then
+                                when current.1 is
+                                    Region ( Init pattern, Empty ) ->
+                                        Region ( Init pattern, Init (Allow (Plain "") ))
+                                    _ ->
+                                        current.1
+                            else
+                                when current.1 is
+                                    None ->
+                                        (Pattern (Allow (Plain data.pattern)))
+                                    (Pattern (Allow (LogicalAnd lst))) ->
+                                        (Pattern (Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))))
+                                    (Pattern (Blacklist (LogicalAnd lst))) ->
+                                        (Pattern (Blacklist (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))))
+                                    Section {before: before, after: after, pattern : Allow (LogicalAnd lst)} ->
+                                        Section {before: before, after: after, pattern : Allow (LogicalAnd (List.append lst (Allow (Plain data.pattern))))}
+                                    Region (pat1, pat2 )->
+                                        when (pat1, pat2 ) is
+                                            (Empty, Empty ) ->
+                                                Region ( Init (Allow (Plain data.pattern)), Empty )
+                                            (Init pattern, Empty ) ->
+                                                when pattern is
+                                                        Allow ( Regex "") ->
+                                                            Region (Init (Allow (Regex data.pattern)), Empty)
+                                                        (Allow (LogicalAnd lst)) ->
+                                                            updatedPat =  Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))
+                                                            Region (Init updatedPat, Empty)
+                                                        _ ->
+                                                            Region (Init pattern, Init (Allow (Plain data.pattern)) )
+                                            (Init pattern1, Init pattern2 ) ->
+                                                when pattern2 is
+                                                        Allow ( Plain "") ->
+                                                            Region (Init pattern1, Init (Allow (Plain data.pattern)))
+                                                        Allow ( Regex "") ->
+                                                            Region (Init pattern1, Init (Allow (Regex data.pattern)))
+                                                        (Allow (LogicalAnd lst)) ->
+                                                            updatedPat = Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))
+                                                            Region (Init pattern1, Init updatedPat)
+                                                        _ -> Region (pat1, pat2 )
+                                            _ -> Region (pat1, pat2 )
+                                    _ -> current.1
+                        (List.walkTry (Set.toList data.config) updated (\ inState, type  ->
+                            when inState is
                                 None ->
-                                    (Pattern (Allow (Plain data.pattern)))
-                                (Pattern (Allow (LogicalAnd lst))) ->
-                                    (Pattern (Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))))
-                                (Pattern (Blacklist (LogicalAnd lst))) ->
-                                    (Pattern (Blacklist (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))))
-                                Section {before: before, after: after, pattern : Allow (LogicalAnd lst)} ->
-                                    Section {before: before, after: after, pattern : Allow (LogicalAnd (List.append lst (Allow (Plain data.pattern))))}
-                                Region (pat1, pat2 )->
-                                    when (pat1, pat2 ) is
-                                        (Empty, Empty ) ->
-                                            Region ( Init (Allow (Plain data.pattern)), Empty )
-                                        (Init pattern, Empty ) ->
-                                            when pattern is
-                                                    Allow ( Regex "") ->
-                                                        Region (Init (Allow (Regex data.pattern)), Empty)
-                                                    (Allow (LogicalAnd lst)) ->
-                                                        updatedPat =  Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))
-                                                        Region (Init updatedPat, Empty)
-                                                    _ ->
-                                                        Region (Init pattern, Init (Allow (Plain data.pattern)) )
-                                        (Init pattern1, Init pattern2 ) ->
-                                            when pattern2 is
-                                                    Allow ( Plain "") ->
-                                                        Region (Init pattern1, Init (Allow (Plain data.pattern)))
-                                                    Allow ( Regex "") ->
-                                                        Region (Init pattern1, Init (Allow (Regex data.pattern)))
-                                                    (Allow (LogicalAnd lst)) ->
-                                                        updatedPat = Allow (LogicalAnd (List.append lst  (Allow (Plain data.pattern)) ))
-                                                        Region (Init pattern1, Init updatedPat)
-                                                    _ -> Region (pat1, pat2 )
-                                        _ -> Region (pat1, pat2 )
-                                _ -> current.1
-                    (List.walkTry (Set.toList data.config) updated (\ inState, type  ->
-                        when inState is
-                            None ->
-                                when type is
-                                    Regex | Blacklist | Color | LogicalAnd ->
-                                        modifyPattern type (Allow (Plain data.pattern))
-                                    NumberLines ->
-                                        Ok (Modifier NumberLines)
-                                    FromLineToLine  from to ->
-                                        Ok (Limit [FromLineToLine  from to])
-                                    Region ->
-                                        Ok (Region ( Empty, Empty ))
-                                    Section before after ->
-                                        Ok (Section {before: before, after: after, pattern : (Allow (Plain data.pattern))})
-                                    _ -> Err "not supported command"
-                            Pattern pat ->
-                                when pat is
-                                    (Allow (LogicalAnd lst)) ->
-                                        when lst is
-                                            [] -> Err "unknown problem during command processing"
-                                            [.. as head, last ] ->
-                                                when modifyPattern type (andTypesConversion last) is
-                                                    Ok (Pattern modifiedPat) ->
-                                                        when andTypesConversionBack modifiedPat is
-                                                            Ok convertPat ->
-                                                                Ok (Pattern (Allow (LogicalAnd (List.append head convertPat))))
-                                                            Err _ -> Err "unknown problem during command processing"
-                                                    Err message -> Err message
+                                    when type is
+                                        Regex | Blacklist | Color | LogicalAnd ->
+                                            modifyPattern type (Allow (Plain data.pattern))
+                                        NumberLines ->
+                                            Ok (Modifier NumberLines)
+                                        FromLineToLine  from to ->
+                                            Ok (Limit [FromLineToLine  from to])
+                                        Region ->
+                                            Ok (Region ( Empty, Empty ))
+                                        Section before after ->
+                                            Ok (Section {before: before, after: after, pattern : (Allow (Plain data.pattern))})
+                                        _ -> Err "not supported command"
+                                Pattern pat ->
+                                    when pat is
+                                        (Allow (LogicalAnd lst)) ->
+                                            when lst is
+                                                [] ->
+                                                    when type is
+                                                        Blacklist ->
+                                                            modifyPattern type pat
+                                                        Region ->
+                                                            Ok (Region ( Init pat, Empty))
+                                                        Section before after ->
+                                                            Ok (Section {before: before, after: after, pattern : pat})
+                                                        _ ->
+                                                            Err "unknown problem during command processing"
+                                                [.. as head, last ] ->
+                                                    when modifyPattern type (andTypesConversion last) is
+                                                        Ok (Pattern modifiedPat) ->
+                                                            when andTypesConversionBack modifiedPat is
+                                                                Ok convertPat ->
+                                                                    Ok (Pattern (Allow (LogicalAnd (List.append head convertPat))))
+                                                                Err _ -> Err "unknown problem during command processing"
+                                                        Err message -> Err message
 
-                                    (Blacklist (LogicalAnd lst)) ->
-                                        when lst is
-                                            [] -> Err "unknown problem during command processing"
-                                            [.. as head, last ] ->
-                                                when modifyPattern type (andTypesConversion last) is
-                                                    Ok (Pattern modifiedPat) ->
-                                                        when andTypesConversionBack modifiedPat is
-                                                            Ok convertPat ->
-                                                                Ok (Pattern (Blacklist (LogicalAnd (List.append head convertPat))))
-                                                            Err _ -> Err "unknown problem during command processing"
-                                                    Err message -> Err message
-                                    _ ->
-                                        when type is
-                                            Regex | Blacklist | Color | LogicalAnd ->
-                                                modifyPattern type pat
-                                            Region ->
-                                                Ok (Region ( Init pat, Empty))
-                                            Section before after ->
-                                                Ok (Section {before: before, after: after, pattern : pat})
-                                            _ ->
-                                                Err "unknown problem during command processing"
-                            Region (pat1, pat2) ->
-                                when (pat1, pat2) is
-                                    (Init pattern1, Init pattern2 ) ->
-                                        when updateRegionPat pattern2 type is
-                                            Ok updatedPat ->
-                                                Ok (Region ( Init pattern1, Init updatedPat ))
-                                            Err _ ->  Err "unknown problem during pattern to pattern command processing"
-                                    (Init _, Empty ) ->
-                                        Err "unknown problem during pattern to pattern command processing"
-                                    _ ->
-                                        when type is
-                                            Regex ->
-                                                Ok (Region ( Init (Allow (Regex "")), Empty ))
-                                            LogicalAnd ->
-                                                Ok (Region ( Init (Allow (LogicalAnd [])), Empty ))
-                                            _ ->
-                                                Err "unknown problem during pattern to pattern command processing"
-                            Section {before: before, after: after, pattern : pat} ->
-                                when pat is
-                                    Allow (LogicalAnd lst) ->
-                                        when lst is
-                                            [] -> Err "unknown problem during command processing"
-                                            [.. as head, last ] ->
-                                                when modifyPattern type (andTypesConversion last) is
-                                                    Ok (Pattern modifiedPat) ->
-                                                        when andTypesConversionBack modifiedPat is
-                                                            Ok convertPat ->
-                                                                Ok (Section {before: before, after: after, pattern : (Allow (LogicalAnd (List.append head convertPat)))})
-                                                            Err _ -> Err "unknown problem during command processing"
-                                                    Err message -> Err message
-                                    _ ->
-                                        when type is
-                                            Regex | LogicalAnd ->
-                                                when modifyPattern type pat is
-                                                    Ok (Pattern modifiedPat) ->
-                                                        Ok (Section {before: before, after: after, pattern : modifiedPat})
-                                                    Err message ->
-                                                        Err message
-                                            _ -> Err "unknown problem during command processing"
-                            Modifier _ ->
-                                Err "unknown problem during command processing"
-                            Limit _ ->
-                                Err "unknown problem during command processing"))
-                    |> (\ processedResult ->
-                        when processedResult is
-                            Ok processed ->
-                                when processed is
-                                    (Pattern (Allow (LogicalAnd _))) |
-                                    (Pattern (Blacklist (LogicalAnd _))) |
-                                    (Section {before: _, after: _, pattern : Allow (LogicalAnd _)}) |
-                                    (Region (_, Empty)) |
-                                    (Region (_, Init (Allow (LogicalAnd _)))) ->
-                                        Continue (Ok ( List.dropFirst current.0 1, processed ))
-                                    _ ->
-                                        Break (Ok ( List.dropFirst current.0 1, processed ))
-                            Err message -> Break (Err message)
-                        ))
+                                        (Blacklist (LogicalAnd lst)) ->
+                                            when lst is
+                                                [] -> Err "unknown problem during command processing"
+                                                [.. as head, last ] ->
+                                                    when modifyPattern type (andTypesConversion last) is
+                                                        Ok (Pattern modifiedPat) ->
+                                                            when andTypesConversionBack modifiedPat is
+                                                                Ok convertPat ->
+                                                                    Ok (Pattern (Blacklist (LogicalAnd (List.append head convertPat))))
+                                                                Err _ -> Err "unknown problem during command processing"
+                                                        Err message -> Err message
+                                        _ ->
+                                            when type is
+                                                Regex | Blacklist | Color | LogicalAnd ->
+                                                    modifyPattern type pat
+                                                Region ->
+                                                    Ok (Region ( Init pat, Empty))
+                                                Section before after ->
+                                                    Ok (Section {before: before, after: after, pattern : pat})
+                                                _ ->
+                                                    Err "unknown problem during command processing"
+                                Region (pat1, pat2) ->
+                                    when (pat1, pat2) is
+                                        (Init pattern1, Init pattern2 ) ->
+                                            when updateRegionPat pattern2 type is
+                                                Ok updatedPat ->
+                                                    Ok (Region ( Init pattern1, Init updatedPat ))
+                                                Err _ ->  Err "unknown problem during pattern to pattern command processing"
+                                        (Init pattern, Empty ) ->
+                                            when updateRegionPat pattern type is
+                                                Ok updatedPat ->
+                                                    Ok (Region ( Init updatedPat, Empty ))
+                                                Err _ ->  Err "unknown problem during pattern to pattern command processing"
+                                        _ ->
+                                            when type is
+                                                Regex ->
+                                                    Ok (Region ( Init (Allow (Regex "")), Empty ))
+                                                LogicalAnd ->
+                                                    Ok (Region ( Init (Allow (LogicalAnd [])), Empty ))
+                                                _ ->
+                                                    Err "unknown problem during pattern to pattern command processing"
+                                Section {before: before, after: after, pattern : pat} ->
+                                    when pat is
+                                        Allow (LogicalAnd lst) ->
+                                            when lst is
+                                                [] -> Err "unknown problem during command processing"
+                                                [.. as head, last ] ->
+                                                    when modifyPattern type (andTypesConversion last) is
+                                                        Ok (Pattern modifiedPat) ->
+                                                            when andTypesConversionBack modifiedPat is
+                                                                Ok convertPat ->
+                                                                    Ok (Section {before: before, after: after, pattern : (Allow (LogicalAnd (List.append head convertPat)))})
+                                                                Err _ -> Err "unknown problem during command processing"
+                                                        Err message -> Err message
+                                        _ ->
+                                            when type is
+                                                Regex | LogicalAnd ->
+                                                    when modifyPattern type pat is
+                                                        Ok (Pattern modifiedPat) ->
+                                                            Ok (Section {before: before, after: after, pattern : modifiedPat})
+                                                        Err message ->
+                                                            Err message
+                                                _ -> Err "unknown problem during command processing"
+                                Modifier _ ->
+                                    Err "unknown problem during command processing"
+                                Limit _ ->
+                                    Err "unknown problem during command processing"))
+                        |> (\ processedResult ->
+                            when processedResult is
+                                Ok processed ->
+                                    when processed is
+                                        (Pattern (Allow (LogicalAnd _))) |
+                                        (Pattern (Blacklist (LogicalAnd _))) |
+                                        (Section {before: _, after: _, pattern : Allow (LogicalAnd _)}) |
+                                        (Region (_, Empty)) |
+                                        (Region (_, Init (Allow (LogicalAnd _)))) ->
+                                            Continue (Ok ( List.dropFirst current.0 1, processed ))
+                                        _ ->
+                                            Break (Ok ( List.dropFirst current.0 1, processed ))
+                                Err message -> Break (Err message)
+                            ))
                 Err message -> Break (Err message)
             ))
         |> (\ processedResult ->

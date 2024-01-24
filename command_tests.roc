@@ -30,24 +30,16 @@ main =
 #     |> Dict.insert "^(([^@]+@)?(\\S*)\\s)" handleOthers
 
     w =
-        when Commands.runParser "br@gggg  ^3and@( kkkk b@ggg   ) <3r@kjj "  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is
-        #when Commands.runParser "and@( fsdfs  rc@sfsdf  b@sffsd ) cassio  cr@RenoD and@( fsdfs  rc@sfsdf  b@sffsd )"  { current : configMiniParser, data: { queue : [Config], content : [] }, regexMagic : regexMagic }  is
-            Ok  parserData ->
-                configResult = Commands.updateConfig (State.createConfigInstance [] None (Set.empty {}) [] ) parserData.content
-                hh =
-                    when  configResult  is
-                        Ok  config  ->
-                            dbg config.command
-                            dbg config.patterns
-                            "ok"
-                        Err message ->
-                            dbg  message
-                            message
-                ""
-            Err mess ->
-                dbg  mess
-                mess
-
+        when Commands.recoverConfigFromInput  (Utils.tokenize "nl@ andb@( rb@white r@blue  b@silver gold ) ")  is
+            Ok config ->
+                dbg config.patterns
+                dbg config.modifiers
+                dbg config.command
+                config.patterns == [Allow (Plain "white")]  &&
+                Set.isEmpty  config.modifiers == Bool.true &&
+                config.command == FromPatternToPattern []
+            Err mes -> mes == "test from pattern to pattern"
+    dbg  w
     Stdout.write  "the goal ofthis unit is to test Commands.roc"
 
 
@@ -108,11 +100,35 @@ expect
         Err mes -> mes == "test invalid command"
 
 expect
-    when Commands.recoverConfigFromInput  (Utils.tokenize " r@osa->@kosa white")  is
+    when Commands.recoverConfigFromInput  (Utils.tokenize " ->r@osa->@kosa white ")  is
         Ok config ->
             config.patterns == [Allow (Plain "white")]  &&
             Set.isEmpty  config.modifiers == Bool.true &&
-            config.command == FromPatternToPattern (Allow (Regex "osa")) (Allow (Plain "kosa"))
+            config.command == (FromPatternToPattern [((Allow (Regex "osa")), (Allow (Plain "kosa")))])
+        Err mes -> mes == "test from pattern to pattern"
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize " r->@osa->and@( kosa white ) nl@ ")  is
+        Ok config ->
+            config.patterns == []  &&
+            (Set.contains config.modifiers NumberLines) == Bool.true &&
+            config.command == (FromPatternToPattern [((Allow (Regex "osa")), (Allow (LogicalAnd [(Allow (Plain "kosa")), (Allow (Plain "white"))])))])
+        Err mes -> mes == "test from pattern to pattern"
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize "white and->@( osa )->r@white nl@ ")  is
+        Ok config ->
+            config.patterns == [Allow (Plain "white")]  &&
+            (Set.contains config.modifiers NumberLines) == Bool.true &&
+            config.command == (FromPatternToPattern [((Allow (LogicalAnd [(Allow (Plain "osa"))])), (Allow (Regex "white")))])
+        Err mes -> mes == "test from pattern to pattern"
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize "white and->@( osa )->r@white nl@ and->@( r@hh  rb@yyy )->r@white ")  is
+        Ok config ->
+            config.patterns == [Allow (Plain "white")]  &&
+            (Set.contains config.modifiers NumberLines) == Bool.true &&
+            config.command == (FromPatternToPattern [((Allow (LogicalAnd [(Allow (Plain "osa"))])), (Allow (Regex "white"))), ((Allow (LogicalAnd [(Allow (Regex "hh")), (Blacklist (Regex "yyy"))])), (Allow (Regex "white")))])
         Err mes -> mes == "test from pattern to pattern"
 
 expect
@@ -147,5 +163,60 @@ expect
             config.command == SearchSection [{before : 10, after : 0, pattern:  (Allow (Plain "black"))}]
         Err mes -> mes == "test region before "
 
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize " r<10@black ") is
+        Ok config ->
+            config.patterns == []  &&
+            Set.isEmpty  config.modifiers == Bool.true &&
+            config.command == (SearchSection [{after: 0, before: 10, pattern: (Allow (Regex "black"))}])
+        Err mes -> mes == "test region before "
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize " <10r@black ") is
+        Ok config ->
+            config.patterns == []  &&
+            Set.isEmpty  config.modifiers == Bool.true &&
+            config.command == (SearchSection [{after: 0, before: 10, pattern: (Allow (Regex "black"))}])
+        Err mes -> mes == "test region before "
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize "white <10and@( black ) nl@") is
+        Ok config ->
+            config.patterns == [Allow (Plain "white")]  &&
+            (Set.contains config.modifiers NumberLines) == Bool.true &&
+            config.command == (SearchSection [{after: 0, before: 10, pattern: (Allow (LogicalAnd [(Allow (Plain "black"))]))}])
+        Err mes -> mes == "test region before "
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize "white and<10@( black ) nl@") is
+        Ok config ->
+            config.patterns == [Allow (Plain "white")]  &&
+            (Set.contains config.modifiers NumberLines) == Bool.true &&
+            config.command == (SearchSection [{after: 0, before: 10, pattern: (Allow (LogicalAnd [(Allow (Plain "black"))]))}])
+        Err mes -> mes == "test region before "
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize "white and<10@( black ) nl@ andb@( white ) ") is
+        Ok config ->
+            config.patterns == [(Allow (Plain "white")), (Blacklist (LogicalAnd [(Allow (Plain "white"))]))]  &&
+            (Set.contains config.modifiers NumberLines) == Bool.true &&
+            config.command == (SearchSection [{after: 0, before: 10, pattern: (Allow (LogicalAnd [(Allow (Plain "black"))]))}])
+        Err mes -> mes == "test region before "
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize "blue and<10@( black ) nl@ andb@( white ) ") is
+        Ok config ->
+            config.patterns == [(Allow (Plain "blue")), (Blacklist (LogicalAnd [(Allow (Plain "white"))]))]  &&
+            (Set.contains config.modifiers NumberLines) == Bool.true &&
+            config.command == (SearchSection [{after: 0, before: 10, pattern: (Allow (LogicalAnd [(Allow (Plain "black"))]))}])
+        Err mes -> mes == "test region before "
+
+expect
+    when Commands.recoverConfigFromInput  (Utils.tokenize " nl@ andb@( rb@white r@blue  b@silver gold ) ") is
+        Ok config ->
+            config.patterns == [(Blacklist (LogicalAnd [(Blacklist (Regex "white")), (Allow (Regex "blue")), (Blacklist (Plain "silver")), (Allow (Plain "gold"))]))]  &&
+            (Set.contains config.modifiers NumberLines) == Bool.true &&
+            config.command == Search
+        Err mes -> mes == "test region before "
 
 # maybe create more test in the future, at least to cover detected bugs
