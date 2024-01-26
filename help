@@ -41,6 +41,9 @@ File Analyzing Mode Commands
 - Specific Line Ranges: Typing 's->100@', '100->e@', or '100->200@' and pressing enter shows text within these line ranges.
 - Surrounding Lines: Typing '^10@phrase1', '>10r@pattern', or '<10@phrase2' and pressing enter shows lines around the specified phrase or pattern.
 
+- load patterns from file in search mode 'fc@file_name    other patterns '
+
 Note: Some commands and phrases can be combined. Use common sense to figure out these combinations.
-
-
+eg. things like this should work:
+'>10and@( pattern1 pattern2 r@regex )'
+'->and@( pattern1 pattern2 r@regex1 )->r@regex2'

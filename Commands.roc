@@ -868,9 +868,10 @@ handleUserCommand = \ state, commandPatRaw ->
                                 when fileResult is
                                     Ok file ->
                                         Task.ok (
-
-                                            State.setCommandOutput state  "Enter file analyze mode\n\rEnter filters and execute search"
-                                            |> State.setFile  (Utils.filterEmpty ( Utils.tokenizeNewLine file ) )
+                                            fileLst  = (Utils.filterEmpty ( Utils.tokenizeNewLine file ) )
+                                            linesStr = Num.toStr (List.len fileLst)
+                                            State.setCommandOutput state  "Enter file analyze mode\n\rEnter filters and execute search\n\rLoaded \(linesStr) lines"
+                                            |> State.setFile fileLst
                                             |> State.setAppMode Search
                                             |> System.switchHistory Search
                                             |> State.updatePrompt )

@@ -100,7 +100,7 @@ guessPath = \ appState ->
     |> ( \ splited ->
             when splited is
                 [..,last] ->
-                    guessResult <- System.guessPath (Commands.replaceTilde  appState last)  |> Task.attempt
+                    guessResult <- System.guessPath appState (Commands.replaceTilde  appState last)  |> Task.attempt
                     when guessResult is
                         Ok guess ->
                             when guess is
@@ -112,9 +112,13 @@ guessPath = \ appState ->
 
                         Err _ -> Task.ok appState
                 [] ->
-                    listedTop <- System.listEntries "." |> Task.attempt
-                    Result.withDefault listedTop []
-                    |> listDir )
+                    mode = State.getAppMode appState
+                    if  (mode == System) then
+                        listedTop <- System.listEntries "." |> Task.attempt
+                        Result.withDefault listedTop []
+                        |> listDir
+                    else
+                        Task.ok appState )
 
 adjustCursorPos : {row : I32, col: I32}, I32 -> {row : I32, col: I32}
 adjustCursorPos = \  position, lineCnt ->
@@ -135,18 +139,22 @@ init : StateType -> Task StateType *
 init = \ appState ->
     {} <- Tty.enableRawMode |> Task.await
     {} <- Stdout.write clearLinePat |> Task.await
-    {} <- Stdout.write endLinePat |> Task.await
-    {} <- Stdout.write bottomLinePat |> Task.await
-    state =  State.getTerminalState appState
-    cursorPositionRes <- queryPosition "" |> Task.attempt
-    when cursorPositionRes is
-    Ok cursor ->
-        updateLineSizeState = State.setTerminalState appState {state & windowSize: cursor.row, lineSize : cursor.col }
-        {} <- Stdout.write homeLinePat |> Task.await
-        {} <- Stdout.write (Utils.utfToStr state.prompt) |> Task.await
-        State.setTerminalHistory updateLineSizeState (State.getCommandHistory appState ).sys
-        |> setCursor
-
+    cursorBackupRes <- queryPosition "" |> Task.attempt
+    when cursorBackupRes  is
+    Ok backup ->
+        {} <- Stdout.write endLinePat |> Task.await
+        {} <- Stdout.write bottomLinePat |> Task.await
+        state =  State.getTerminalState appState
+        cursorPositionRes <- queryPosition "" |> Task.attempt
+        when cursorPositionRes is
+        Ok cursor ->
+            updateLineSizeState = State.setTerminalState appState {state & windowSize: cursor.row, lineSize : cursor.col }
+            {} <- Stdout.write (cursorPosition {row: backup.row, col: backup.col}) |> Task.await
+            {} <- Stdout.write homeLinePat |> Task.await
+            {} <- Stdout.write (Utils.utfToStr state.prompt) |> Task.await
+            State.setTerminalHistory updateLineSizeState (State.getCommandHistory appState ).sys
+            |> setCursor
+        Err _ -> Task.ok appState
     Err _ -> Task.ok appState
 
 setCursor : StateType -> Task StateType *

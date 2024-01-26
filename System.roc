@@ -175,8 +175,8 @@ executeCommand = \ state, lstCmd ->
                     |> Cmd.args args
                 execute command (analyzeLsData args (name == "ls"))
 
-guessPath : Str -> Task GuessEffectType *
-guessPath = \ pathRaw ->
+guessPath : StateType, Str -> Task GuessEffectType *
+guessPath = \ state, pathRaw ->
     path =
         if Str.startsWith pathRaw "fm@" == Bool.true then
             Str.replaceFirst pathRaw "fm@" ""
@@ -185,42 +185,58 @@ guessPath = \ pathRaw ->
                     "./"
                 else
                     str)
+        else if Str.startsWith pathRaw "fc@" == Bool.true then
+            Str.replaceFirst pathRaw "fc@" ""
+            |> (\ str ->
+                if Str.isEmpty str then
+                    "./"
+                else
+                    str)
         else
             pathRaw
-    isDir <- isDirectoryPath path|> Task.attempt
-    if Result.withDefault isDir Bool.false == Bool.false then
-        splitted = stripPath path
-        listedBase <- listEntries splitted.before |> Task.attempt
-        when listedBase is
-            Ok base ->
-                if List.isEmpty base then
-                    Task.ok None
-                else
-                    cleanPath =
-                        List.map base (\ subPath ->
-                            when Str.splitLast subPath "/" is
-                                Ok splited -> splited.after
-                                Err _ -> subPath
-                            )
-                    Task.ok (guessEffect cleanPath splitted.after)
-            Err _ -> Task.ok None
-    else
-        listedTop <- listEntries path |> Task.attempt
-        when listedTop is
-            Ok listed ->
-                when listed is
-                    [] ->
+
+    mode = State.getAppMode state
+    if  (mode == System) ||
+        (  mode == Search &&
+        ( Str.startsWith pathRaw "fm@" ||
+          Str.startsWith pathRaw "fc@") ) then
+
+        isDir <- isDirectoryPath path|> Task.attempt
+        if Result.withDefault isDir Bool.false == Bool.false then
+            splitted = stripPath path
+            listedBase <- listEntries splitted.before |> Task.attempt
+            when listedBase is
+                Ok base ->
+                    if List.isEmpty base then
                         Task.ok None
-                    [..,elem] ->
-                        when Str.toUtf8 path is
-                            [..,'/'] ->
-                                if List.len listed == 1 then
-                                    Task.ok (Extend ((stripPath elem).after))
-                                else
-                                    Task.ok (ListDir listed)
-                            _ ->
-                                Task.ok (Extend "/")
-            Err _ -> Task.ok None
+                    else
+                        cleanPath =
+                            List.map base (\ subPath ->
+                                when Str.splitLast subPath "/" is
+                                    Ok splited -> splited.after
+                                    Err _ -> subPath
+                                )
+                        Task.ok (guessEffect cleanPath splitted.after)
+                Err _ -> Task.ok None
+        else
+            listedTop <- listEntries path |> Task.attempt
+            when listedTop is
+                Ok listed ->
+                    when listed is
+                        [] ->
+                            Task.ok None
+                        [..,elem] ->
+                            when Str.toUtf8 path is
+                                [..,'/'] ->
+                                    if List.len listed == 1 then
+                                        Task.ok (Extend ((stripPath elem).after))
+                                    else
+                                        Task.ok (ListDir listed)
+                                _ ->
+                                    Task.ok (Extend "/")
+                Err _ -> Task.ok None
+    else
+        Task.ok None
 
 isDirectoryPath : Str -> Task Bool  *
 isDirectoryPath = \ str ->
